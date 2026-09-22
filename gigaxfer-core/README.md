@@ -23,7 +23,7 @@ switch (r) {
 規則：
 
 1. Logical key 對不同內容唯一（含 run id / timestamp）；不得以 `.writing`、`.tmp` 結尾或含 `.manifest`，否則 `beginWrite()` 在碰 NFS 前就丟 `IllegalArgumentException`。
-2. `finalizeWrite()` 回 `Success` 才 commit 業務交易；`PendingConfirmation` 重呼同一 handle 的 `finalizeWrite()` 直到確定；`Failure` 視為交易失敗。
+2. `finalizeWrite()` 回 `Success` 才 commit 業務交易；`PendingConfirmation` 重呼同一 handle 的 `finalizeWrite()` 直到確定；`Failure` 視為交易失敗。`finalizeWrite()` 第①步 fsync 成功、digest 固定後內容即定案：之後 `stream()` 的任何寫入（含 `flush`）都丟 `IOException`，但不毒化 handle——已發布的結果重呼仍是 `Success`。內部關通道失敗也不留下可改寫正式檔的路徑（通道只有 `stream()` 寫得到）。
 3. **Handle 中毒（poisoned）**：`stream().write(...)` 只要失敗，handle 就從此中毒——池滿／timeout 丟 `NfsUnavailableException`（`IOException` 子類），其餘寫入失敗（ENOSPC、EDQUOT、EIO、ESTALE…）原樣丟出該 `IOException`。`finalizeWrite()` 內部第①步的 `stream.flush()` 一樣可能踩到同樣狀況——那一次 `finalizeWrite()` 呼叫仍會回 `PendingConfirmation`（結果未知，不算失敗，SR-04），但 handle 已中毒；**之後每次**再呼叫 `finalizeWrite()` 都會立刻回 `Failure(IO, "stream failed at " + <op>)`，不會再嘗試連 NFS。Application 必須把這視為交易失敗、拋棄此 handle、用新的 `beginWrite()` 重來——這是安全的，因為 commit point（③ link-key）從未被踩到。若 fsync/manifest/link 等純 NFS 操作（不經 `stream()`）本身池滿或 timeout，handle 不會中毒，重呼 `finalizeWrite()` 會照原序列重試（見 Task 10 `FinalizeUnderPressureTest` 第三個案例）。
 4. 交易重跑直接 `beginWrite` + `finalizeWrite`，冪等保證不重複；不需先查。
 5. `discard()` 只允許在 digest 尚未固定前呼叫，也就是 `finalizeWrite()` 第①步 fsync 尚未成功完成之前（之後丟 `IllegalStateException`）；write 失敗（poisoned）或第①步 fsync 因池滿/timeout 回 `PendingConfirmation`（digest 仍未固定）時仍允許 discard。

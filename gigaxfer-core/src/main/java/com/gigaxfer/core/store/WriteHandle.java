@@ -52,7 +52,32 @@ public final class WriteHandle implements AutoCloseable {
         this.uuid = uuid;
         this.writing = writing;
         this.channel = channel;
-        this.stream = new java.io.BufferedOutputStream(new ChannelStream(), BUFFER);
+        // 檢查放在 Application 拿到的外層：小於緩衝的寫入不會碰到 ChannelStream，只在內層擋會讓
+        // SUCCESS 後的位元組先進緩衝、下次 flush 再寫進已發布的 inode。
+        this.stream = new java.io.BufferedOutputStream(new ChannelStream(), BUFFER) {
+            @Override
+            public void write(int b) throws IOException {
+                requireWritable();
+                super.write(b);
+            }
+
+            @Override
+            public void write(byte[] b, int off, int len) throws IOException {
+                requireWritable();
+                super.write(b, off, len);
+            }
+        };
+    }
+
+    /**
+     * digest 固定（第①步 fsync 成功）後內容就定案：之後的 link 會把「這個 inode」發布成正式檔，
+     * 任何再寫進來的位元組都會改寫正式內容而 manifest digest 不變（P01-04、P01-08）。
+     * 拒寫不毒化 handle：已發布的結果仍是 SUCCESS。
+     */
+    private void requireWritable() throws IOException {
+        if (discarded) throw new IOException("handle discarded");
+        if (failed) throw new IOException("handle failed");
+        if (digest != null) throw new IOException("handle finalized; content is fixed at " + digest);
     }
 
     public FileIdentity identity() {
@@ -124,7 +149,11 @@ public final class WriteHandle implements AutoCloseable {
                         }
                     }
                 });
-                digest = Sha256.format(md); // md.digest() 會重設狀態，只能呼叫一次
+                digest = Sha256.format(md); // md.digest() 會重設狀態，只能呼叫一次；此後 requireWritable() 拒寫
+                // close 失敗（池滿／timeout）仍照常發布：channel 是 private，唯一的寫入者是 stream()，
+                // 而 digest 已固定 → requireWritable() 拒絕一切後續寫入；也不會有更早的 write 還在飛——
+                // write 一旦 timeout 就毒化 handle，永不走到這裡。把 close 失敗當成不可發布反而讓 hard mount
+                // 卡住的 close 永久擋住發布，換不到任何安全性。
                 bestEffort("close-writing", channel::close);
             }
 
@@ -269,8 +298,7 @@ public final class WriteHandle implements AutoCloseable {
 
         @Override
         public void write(byte[] b, int off, int len) throws IOException {
-            if (discarded) throw new IOException("handle discarded");
-            if (failed) throw new IOException("handle failed");
+            requireWritable(); // 第二道：flush 也經這裡
             ByteBuffer buf = ByteBuffer.wrap(b, off, len);
             try {
                 store.nfs.run("write", () -> {

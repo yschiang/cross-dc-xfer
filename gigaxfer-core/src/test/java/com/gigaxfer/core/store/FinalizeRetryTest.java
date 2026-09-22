@@ -7,6 +7,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -14,6 +15,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** SR-04：結果未知的一步之後，重呼 finalizeWrite() 必須還能走完。 */
 class FinalizeRetryTest {
@@ -66,5 +68,28 @@ class FinalizeRetryTest {
         Path published = root.resolve("P3/mes/metrology/2026-09-22/08/R2");
         assertThat(published).hasSize(128 * 1024);
         assertThat(h.writingPath()).doesNotExist();
+    }
+
+    /**
+     * P01-04／P01-08：SUCCESS 後正式內容不可變。close-writing 失敗（通道仍開著、指向已發布的 inode）時，
+     * 經 handle 的任何寫入都必須被拒，正式檔大小與內容不變；被拒的寫入也不得把已發布的 handle 毒化成 FAILURE。
+     */
+    @Test
+    void writes_after_success_are_rejected_even_if_close_failed() throws Exception {
+        WriteHandle h = store.beginWrite("mes", "metrology", "R3");
+        h.stream().write("payload".getBytes(StandardCharsets.UTF_8));
+        nfs.dropBefore("close-writing");
+
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
+        Path published = root.resolve("P3/mes/metrology/2026-09-22/08/R3");
+
+        assertThatThrownBy(() -> h.stream().write(new byte[128 * 1024])).isInstanceOf(IOException.class); // 超過緩衝，直達通道
+        assertThatThrownBy(() -> {
+            h.stream().write('x'); // 小於緩衝
+            h.stream().flush();
+        }).isInstanceOf(IOException.class);
+
+        assertThat(published).hasContent("payload");
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
     }
 }
