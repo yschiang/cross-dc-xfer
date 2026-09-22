@@ -98,6 +98,13 @@ class ConfigCodecTest {
     }
 
     @Test
+    void rejects_empty_nodes() throws IOException {
+        assertThatThrownBy(() -> ConfigCodec.decode(mutate("[\"P1\", \"P2\", \"P3\"]", "[]")))
+            .isInstanceOf(InvalidConfigException.class)
+            .hasMessageContaining("nodes");
+    }
+
+    @Test
     void rejects_more_than_ten_nodes() throws IOException {
         String eleven = "[\"P1\", \"P2\", \"P3\", \"P4\", \"P5\", \"P6\", \"P7\", \"P8\", \"P9\", \"P10\", \"P11\"]";
         assertThatThrownBy(() -> ConfigCodec.decode(mutate("[\"P1\", \"P2\", \"P3\"]", eleven)))
