@@ -39,6 +39,7 @@ public final class Sha256 {
     }
 
     /**
+     * 唯一的檔案 digest 入口（P01-07：NFS 操作一律經有界執行器，刻意不提供繞過執行器的 overload）。
      * 經有界執行器逐塊讀：開檔、每個 64 KB read、關檔各自一次 op，
      * 不讓「整檔讀取」卡成一個超過 executor timeout 的巨大操作（大檔會永遠拿不到結果、
      * 每次重試又重讀整檔並占滿槽位）。任一塊 timeout／池滿時 NfsException 原樣往外傳。
@@ -57,16 +58,6 @@ public final class Sha256 {
             } catch (Exception ignored) {
                 // 清道夫兜底（D35）
             }
-        }
-        return format(md);
-    }
-
-    public static String ofFile(Path path) throws IOException {
-        MessageDigest md = newDigest();
-        byte[] buf = new byte[BUFFER];
-        try (InputStream in = Files.newInputStream(path)) {
-            int n;
-            while ((n = in.read(buf)) != -1) md.update(buf, 0, n);
         }
         return format(md);
     }

@@ -91,7 +91,7 @@ class FinalizeHappyPathTest {
         Path key = root.resolve("P3/mes/metrology/2026-09-22/08/BIG");
         assertThat(Files.size(key)).isEqualTo(8L << 20);
         Manifest m = new ManifestCodec().decode(Files.readAllBytes(layout.manifestPath(new FileIdentity("P3", "mes", "BIG"))));
-        assertThat(m.digest()).isEqualTo(Sha256.ofFile(key));
+        assertThat(m.digest()).isEqualTo(Sha256.ofFile(nfs, "digest", key));
     }
 
     @Test
