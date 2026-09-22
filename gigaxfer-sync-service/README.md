@@ -85,9 +85,9 @@ curl -s localhost:8080/actuator/prometheus | grep -E '^db_health'
 | `GET /actuator/health/readiness` | 無 | `db`、`nfs` 兩個 component |
 | `GET /actuator/health/liveness` | 無 | process 存活 |
 | `GET /actuator/prometheus` | 無 | 指標；`node` 標籤自動附加 |
-| `/pending`、`/file/**`、`/report`、`/received` | `Authorization: Bearer <token>` | Node 間端點；本模組只提供 filter，端點由 P04 起實作 |
+| 其他所有路徑（含 `/pending`、`/file/**`、`/report`、`/received`） | `Authorization: Bearer <token>` | Node 間端點；預設全保護（fail-closed），本模組只提供 filter，端點由 P04 起實作 |
 
-401 = 無 / 未知 token；403 = `target` 參數與呼叫者身分不同（D14 修 2）。`/received` 不套用 target==caller 規則（只列出 caller 為 Source 的資料列由 P04 實作）。Node 內端點（`/policy`、`/actuator/**`）不認證——同主機群、Node 內視為信任邊界內。TLS 由 `server.ssl.*` 部署設定提供（D14），本模組測試走明文；生產環境必須在部署設定啟用 HTTPS，本模組不強制、不驗證。
+401 = 無 / 未知 token；403 = `target` 參數與呼叫者身分不同（D14 修 2）。`/received` 不套用 target==caller 規則（只列出 caller 為 Source 的資料列由 P04 實作）。Node 內端點只有豁免清單 `/policy`、`/locate/**`、`/actuator/**`、`/error` 不認證（同主機群、Node 內視為信任邊界內）；其餘路徑一律需要 token。路徑比對用解碼後、去掉 `;` 參數的 application path，`/%70ending`、`/pending;x=1` 等寫法不能繞過。401 帶 `WWW-Authenticate: Bearer`；scheme 名稱大小寫不敏感；403 訊息為常數，不回傳節點名。TLS 由 `server.ssl.*` 部署設定提供（D14），本模組測試走明文；生產環境必須在部署設定啟用 HTTPS，本模組不強制、不驗證。
 
 認證檢查範例：
 

@@ -5,10 +5,10 @@ Ticket: [P02：Node 本地同步服務基礎 #1](https://github.com/yschiang/cro
 ## 基準
 
 - Branch: `p02-sync-service-skeleton`
-- HEAD: `99521aa`（feat(sync): per-node bearer token auth filter with hashed peer tokens, D14 rev 2）
+- HEAD: `75d9cd2`（fix(sync): auth filter fail-closed — decoded path, exemption list, RFC 7235 details）
 - Base（本輪計畫修訂起點）: `72ac972`（docs: P02 plan revision）
 - 上游 P01: `86360ac`
-- Commit 序列：`650e49a` Task1、`6f935a7`+`1617096` Task2、`0f3f916` Task3、`eab8df6`/`83e4ff0`/`7191331` 1R–3R、`62bab04`+`070c2c8` Task4、`0fbe020`+`9c87006` Task5、`99521aa` Task6。
+- Commit 序列：`650e49a` Task1、`6f935a7`+`1617096` Task2、`0f3f916` Task3、`eab8df6`/`83e4ff0`/`7191331` 1R–3R、`62bab04`+`070c2c8` Task4、`0fbe020`+`9c87006` Task5、`99521aa` Task6、`947d789` Task7、`75d9cd2` Task6 fix round 1（審查 H-1：`getRequestURI` 未解碼／含 `;` 可繞過 filter → 改 `UrlPathHelper` 解碼路徑 + 豁免清單預設全保護）。
 
 ## 環境
 
@@ -33,9 +33,9 @@ mvn test
 
 | 模組 | 測試數 | Failures | Errors |
 | --- | --- | --- | --- |
-| gigaxfer-core | 84 | 0 | 0 |
-| gigaxfer-sync-service | 42 | 0 | 0 |
-| 合計 | 126 | 0 | 0 |
+| gigaxfer-core | 85 | 0 | 0 |
+| gigaxfer-sync-service | 52 | 0 | 0 |
+| 合計 | 137 | 0 | 0 |
 
 （測試類別清單：核對用 `grep -rn "void " gigaxfer-*/src/test` 取實際方法名，下表逐 AC 列出對應項。）
 
@@ -52,9 +52,9 @@ mvn test
 | P02-07 schema 與冪等 bootstrap | Task 4 | `SchemaTest.migration_runs_in_background_and_creates_all_tables`、`SchemaTest.node_meta_has_one_incarnation_and_seq_counters_start_at_zero`、`SchemaTest.bootstrap_is_idempotent_across_restarts`、`SchemaTest.obligation_state_check_constraint_rejects_unknown_state`、`SchemaTest.remote_received_keeps_source_selected_path_without_local_source_row` | 通過 | 含 `received.content_path`、非零計數器保留；欄位改名見 design-decisions「P02 偏差」⑥ |
 | P02-08 DB 故障恢復 | Task 4、5 | `DbOutageRecoveryTest.db_becomes_ready_without_restart_after_outage` | 通過 | DB 不可用時 process 不退出、`/policy` 仍回應；DB 恢復後不重啟即轉 ready（`gigaxfer.db-retry-millis` 測試縮短為 200ms） |
 | P02-09 health 語意 | Task 5 | `HealthEndpointTest.readiness_is_up_when_db_migrated_and_nfs_root_reachable`、`HealthEndpointTest.nfs_component_is_down_when_root_disappears_and_recovers`、`HealthEndpointTest.liveness_does_not_depend_on_db_or_nfs`、`NfsTimeoutHealthTest.nfs_component_is_down_when_probe_times_out` | 通過 | 含 NFS timeout；liveness 只看 process 存活，不受 DB/NFS 影響 |
-| P02-10 Node 認證 | Task 6 | `NodeAuthFilterTest`（10 個測試：`own_token_is_read_from_secret_file_and_trimmed`、`missing_authorization_is_401`、`unknown_token_is_401`、`non_bearer_scheme_is_401`、`known_token_resolves_caller_node`、`target_param_equal_to_caller_is_allowed`、`target_param_different_from_caller_is_403`、`node_internal_endpoints_need_no_token`、`protected_prefixes_cover_file_subpaths`、`received_does_not_apply_target_equals_caller_rule`） | 通過 | 401 = 無/未知 token；403 = target 與 caller 不同（D14 修 2） |
+| P02-10 Node 認證 | Task 6 | `NodeAuthFilterUnitTest`（`protected_paths_require_auth_even_when_obfuscated` 對 `/pending;x=1`、`/%70ending` 等參數化、`exempt_paths_need_no_token`）、`Sha256Test.hex_of_p1_secret_matches_fixture`；`NodeAuthFilterTest`（10 個測試：`own_token_is_read_from_secret_file_and_trimmed`、`missing_authorization_is_401`、`unknown_token_is_401`、`non_bearer_scheme_is_401`、`known_token_resolves_caller_node`、`target_param_equal_to_caller_is_allowed`、`target_param_different_from_caller_is_403`、`node_internal_endpoints_need_no_token`、`protected_prefixes_cover_file_subpaths`、`received_does_not_apply_target_equals_caller_rule`） | 通過 | 401 = 無/未知 token；403 = target 與 caller 不同（D14 修 2） |
 | P02-11 角色身分 | Task 6 | `NodeAuthFilterTest.known_token_resolves_caller_node`、`NodeAuthFilterTest.target_param_different_from_caller_is_403`、`NodeAuthFilterTest.received_does_not_apply_target_equals_caller_rule` | 通過 | `/received` 不套用 target==caller 規則；「只列 caller 為 Source 的列」的實作留給 P04 |
-| P02-12 可交接可重現 | Task 7 | `gigaxfer-sync-service/README.md`、本檔（`docs/validation/P02-validation.md`）、`mvn test` 126/126 全綠 | 通過 | 含首次初始化、設定更新/回退操作、DB 斷線觀察、認證 curl 範例、health/metrics 範例、HTTPS 部署要求 |
+| P02-12 可交接可重現 | Task 7 | `gigaxfer-sync-service/README.md`、本檔（`docs/validation/P02-validation.md`）、`mvn test` 137/137 全綠 | 通過 | 含首次初始化、設定更新/回退操作、DB 斷線觀察、認證 curl 範例、health/metrics 範例、HTTPS 部署要求 |
 
 ## 尚未驗證
 
