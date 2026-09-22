@@ -2,6 +2,7 @@ package com.gigaxfer.sync.db;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.gigaxfer.sync.SyncTestSupport;
@@ -68,8 +69,14 @@ class DbOutageRecoveryTest extends SyncTestSupport {
         assertThat(db.ready()).isFalse();
         assertThat(db.lastError()).isPresent();
         mvc.perform(get("/policy")).andExpect(status().isOk());
+        mvc.perform(get("/actuator/health/readiness"))
+            .andExpect(status().isServiceUnavailable())
+            .andExpect(jsonPath("$.components.db.status").value("DOWN"));
         FlakyDataSourceConfig.down.set(false);
         assertThat(db.awaitReady(Duration.ofSeconds(10))).isTrue();
         assertThat(db.lastError()).isEmpty();
+        mvc.perform(get("/actuator/health/readiness"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.components.db.status").value("UP"));
     }
 }

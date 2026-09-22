@@ -21,7 +21,7 @@ management:
         enabled: true
       group:
         readiness:
-          include: db,nfs
+          include: readinessState,db,nfs
   health:
     db:
       enabled: false   # 關掉 Boot 內建 DataSource indicator：migration 未完成時它也回 UP，語意不對；自訂 db 取代

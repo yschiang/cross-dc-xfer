@@ -15,12 +15,10 @@ import org.springframework.stereotype.Component;
 public class NfsHealthIndicator implements HealthIndicator {
     private final NfsExecutor nfs;
     private final SyncProperties props;
-    private final HealthMetrics metrics;
 
-    public NfsHealthIndicator(NfsExecutor nfs, SyncProperties props, HealthMetrics metrics) {
+    public NfsHealthIndicator(NfsExecutor nfs, SyncProperties props) {
         this.nfs = nfs;
         this.props = props;
-        this.metrics = metrics;
     }
 
     @Override
@@ -29,16 +27,12 @@ public class NfsHealthIndicator implements HealthIndicator {
             BasicFileAttributes attrs = nfs.call("stat-root",
                 () -> Files.readAttributes(props.nfsRoot(), BasicFileAttributes.class));
             if (!attrs.isDirectory()) {
-                metrics.storage(false);
                 return Health.down().withDetail("reason", "nfs root is not a directory").build();
             }
-            metrics.storage(true);
             return Health.up().withDetail("root", props.nfsRoot().toString()).build();
         } catch (NfsException e) {
-            metrics.storage(false);
             return Health.down().withDetail("op", e.op()).withDetail("reason", e.getClass().getSimpleName()).build();
         } catch (IOException e) {
-            metrics.storage(false);
             return Health.down(e).build();
         }
     }

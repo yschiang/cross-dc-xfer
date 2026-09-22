@@ -38,7 +38,9 @@ class PolicyEndpointTest extends SyncTestSupport {
             .andExpect(jsonPath("$.policy.namespaces[1]").value("transactions"))
             .andExpect(jsonPath("$.policy.required_targets[0].source_node").value("P1"))
             .andExpect(jsonPath("$.policy.required_targets[0].data_class").value("local-only"))
-            .andExpect(jsonPath("$.policy.required_targets[1].targets[1]").value("P3"));
+            .andExpect(jsonPath("$.policy.required_targets[1].targets[1]").value("P3"))
+            .andExpect(jsonPath("$.operational").doesNotExist())
+            .andExpect(jsonPath("$.policy.peer_token_sha256").doesNotExist());
     }
 
     @Test

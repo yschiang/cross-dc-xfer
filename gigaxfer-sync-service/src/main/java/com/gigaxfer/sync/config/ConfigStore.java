@@ -38,8 +38,10 @@ public final class ConfigStore {
 
         Optional<String> failure = Optional.empty();
         Optional<NodeConfig> current = read(active);
-        if (current.isEmpty() && Files.exists(active)) {
-            failure = Optional.of("active.json unreadable, using lkg");
+        if (current.isEmpty()) {
+            failure = Files.exists(active)
+                ? Optional.of("active.json unreadable, using lkg")
+                : Optional.of("active.json missing, using lkg");
         }
         ConfigActivation.Source source = current.isPresent() ? ConfigActivation.Source.ACTIVE : ConfigActivation.Source.LKG;
         Optional<NodeConfig> baseline = current.isPresent() ? current : read(lkg);

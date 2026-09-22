@@ -52,6 +52,7 @@ class ConfigStoreTest {
         ConfigActivation a = new ConfigStore(dir).load();
         assertThat(a.source()).isEqualTo(ConfigActivation.Source.LKG);
         assertThat(a.config().version()).isEqualTo(2L);
+        assertThat(a.activationFailure()).isPresent();
     }
 
     @Test
