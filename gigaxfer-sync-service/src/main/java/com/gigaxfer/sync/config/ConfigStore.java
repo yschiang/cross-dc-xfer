@@ -72,12 +72,10 @@ public final class ConfigStore {
         if (current.isPresent()) {
             return new ConfigActivation(current.get(), source, failure);
         }
-        Optional<NodeConfig> fromLkg = read(lkg);
-        if (fromLkg.isPresent()) {
-            log.warn("active.json missing or unreadable, running on lkg.json version {}", fromLkg.get().version());
-            return new ConfigActivation(fromLkg.get(), ConfigActivation.Source.LKG, failure);
-        }
-        throw new ConfigUnavailableException("neither " + active + " nor " + lkg + " is a valid config; refusing to start");
+        // current 缺 → baseline 就是 lkg，且已在上面確認非空。
+        NodeConfig fromLkg = baseline.orElseThrow();
+        log.warn("active.json missing or unreadable, running on lkg.json version {}", fromLkg.version());
+        return new ConfigActivation(fromLkg, ConfigActivation.Source.LKG, failure);
     }
 
     /** 回 null = 通過；否則為拒絕原因。 */

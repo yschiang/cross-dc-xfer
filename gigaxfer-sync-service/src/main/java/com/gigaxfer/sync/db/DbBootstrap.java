@@ -1,5 +1,6 @@
 package com.gigaxfer.sync.db;
 
+import com.gigaxfer.sync.SyncProperties;
 import java.util.UUID;
 import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
@@ -12,7 +13,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * 啟動序列第二步（D34）：開 DB。DB 連不上不退出：背景每 5 s 重試 migration，期間 health 回 DOWN（D34 修）。
+ * 啟動序列第二步（D34）：開 DB。DB 連不上不退出：背景重試 migration（預設每 5 s，
+ * 可用 gigaxfer.db-retry-millis 覆寫，測試用），期間 health 回 DOWN（D34 修）。
  * bootstrap 列：node_meta 一列（incarnation 只在首次建立時產生，D55 (5)）、seq_counter 兩列（D29 修 11）。
  */
 @Configuration
@@ -42,7 +44,8 @@ public class DbBootstrap {
     }
 
     @Bean
-    SmartLifecycle dbBootstrapLifecycle(DbState state) {
+    SmartLifecycle dbBootstrapLifecycle(DbState state, SyncProperties props) {
+        long retryMillis = props.dbRetryMillis() == null ? RETRY_MILLIS : props.dbRetryMillis();
         return new SmartLifecycle() {
             private volatile Thread worker;
 
@@ -55,10 +58,10 @@ public class DbBootstrap {
                             log.info("database migrated and bootstrapped");
                             return;
                         } catch (RuntimeException e) {
-                            log.warn("database not ready ({}); retrying in {} ms", state.lastError().orElse("?"), RETRY_MILLIS);
+                            log.warn("database not ready ({}); retrying in {} ms", state.lastError().orElse("?"), retryMillis);
                         }
                         try {
-                            Thread.sleep(RETRY_MILLIS);
+                            Thread.sleep(retryMillis);
                         } catch (InterruptedException ie) {
                             Thread.currentThread().interrupt();
                             return;

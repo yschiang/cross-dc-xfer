@@ -12,5 +12,6 @@ public record SyncProperties(
     Path tokenFile,
     Path nfsRoot,
     Duration nfsTimeout,
-    int nfsSlots) {
+    int nfsSlots,
+    Long dbRetryMillis) {
 }

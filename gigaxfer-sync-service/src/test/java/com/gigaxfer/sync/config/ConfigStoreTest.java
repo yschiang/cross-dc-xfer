@@ -175,6 +175,16 @@ class ConfigStoreTest {
     }
 
     @Test
+    void corrupt_active_without_lkg_refuses_even_with_good_candidate() throws Exception {
+        put("active.json", "{ not json");
+        put("candidate.json", withVersion(fixture(), 4));
+        assertThatThrownBy(() -> new ConfigStore(dir).load())
+            .isInstanceOf(ConfigUnavailableException.class);
+        assertThat(dir.resolve("candidate.json")).exists();
+        assertThat(Files.readString(dir.resolve("active.json"))).isEqualTo("{ not json");
+    }
+
+    @Test
     void ignores_candidate_tmp_still_being_written_by_cd() throws Exception {
         put("active.json", fixture());
         put("candidate.json.tmp", "partial");
