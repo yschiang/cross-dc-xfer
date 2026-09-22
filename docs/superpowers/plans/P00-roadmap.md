@@ -1,7 +1,7 @@
 # 實作路線圖（Plan 00）
 
 > 依據：`docs/spec.md` v0.3、`docs/design/system-design.md`、`docs/design/design-decisions.md`（D1–D56 及修訂）、`docs/design/monitoring.md`、`docs/design/file-inventory.md`、ADR-0001～0003。
-> 每一列是一份獨立的 superpowers plan（`docs/superpowers/plans/2026-MM-DD-<NN>-<name>.md`），同時是一個 OpenSpec change。每份計畫交付可獨立測試的軟體。
+> 每一列是一份獨立的 superpowers plan（`docs/superpowers/plans/P<NN>-<name>.md`），同時是一個 OpenSpec change。每份計畫交付可獨立測試的軟體。
 
 ## 建置假設（可改，改了只動 P01 的 Task 1）
 
