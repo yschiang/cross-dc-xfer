@@ -1,0 +1,75 @@
+# P02 — sync-service 骨架驗收紀錄
+
+Ticket: [P02：Node 本地同步服務基礎 #1](https://github.com/yschiang/cross-dc-xfer/issues/1)
+
+## 基準
+
+- Branch: `p02-sync-service-skeleton`
+- HEAD: `99521aa`（feat(sync): per-node bearer token auth filter with hashed peer tokens, D14 rev 2）
+- Base（本輪計畫修訂起點）: `72ac972`（docs: P02 plan revision）
+- 上游 P01: `86360ac`
+- Commit 序列：`650e49a` Task1、`6f935a7`+`1617096` Task2、`0f3f916` Task3、`eab8df6`/`83e4ff0`/`7191331` 1R–3R、`62bab04`+`070c2c8` Task4、`0fbe020`+`9c87006` Task5、`99521aa` Task6。
+
+## 環境
+
+- 硬體/OS：arm64 macOS，Darwin 27.0.0
+- JDK：Homebrew OpenJDK 27，以 `--release 21` 編譯（POM `maven.compiler.release=21`）；`/usr/local` 工具鏈為 x86_64、不可用
+- Maven：3.9（系統安裝）
+- DB：H2 2.3，`MODE=Oracle`（測試 in-memory；非 Oracle 實機）
+- NAS：本機檔案系統（`@TempDir`）代替 NFS `hard` mount；未對真實 NFS client 語意（ESTALE、lock、failover）驗證
+- 每個 shell 先執行：
+  ```bash
+  export JAVA_HOME=/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home
+  export PATH=/opt/homebrew/bin:$JAVA_HOME/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH
+  ```
+
+## 命令與結果
+
+```bash
+mvn test
+```
+
+結果：`BUILD SUCCESS`。
+
+| 模組 | 測試數 | Failures | Errors |
+| --- | --- | --- | --- |
+| gigaxfer-core | 84 | 0 | 0 |
+| gigaxfer-sync-service | 42 | 0 | 0 |
+| 合計 | 126 | 0 | 0 |
+
+（測試類別清單：核對用 `grep -rn "void " gigaxfer-*/src/test` 取實際方法名，下表逐 AC 列出對應項。）
+
+## 逐 AC 驗收證據
+
+| AC | 對應 task | 測試證據 | 結果 | 備註 |
+| --- | --- | --- | --- | --- |
+| P02-01 獨立啟動 | Task 3、5 | `StartupRefusalTest.node_not_in_policy_refuses_to_start`、`StartupRefusalTest.missing_active_and_lkg_refuses_to_start`、`ConfigStoreTest.refuses_when_neither_active_nor_lkg_exists` | 通過 | context 啟動失敗（非靜默降級）；P02 不掃描（掃描器 P03 才加入） |
+| P02-02 Policy 登錄契約 | Task 1R、3R | `PolicyEndpointTest.policy_endpoint_returns_version_and_normalised_policy_without_auth`、`ConfigCodecTest.registry_rejects_unregistered_namespace_but_allows_local_only_class`、`ConfigCodecTest.namespace_registry_is_validated_and_part_of_policy_identity`、`ConfigCodecTest.rejects_target_not_in_nodes`、`ConfigCodecTest.rejects_source_as_its_own_target`、`ConfigCodecTest.rejects_duplicate_source_class_pair` | 通過 | Namespace 未登錄不可 write；空 targets 表示已登錄但僅本地 |
+| P02-03 設定驗證 | Task 1、1R、2 | `ConfigCodecTest`（20 個測試：`rejects_unknown_field`、`rejects_wrong_schema_version`、`fixed_segment_may_be_omitted_and_then_defaults_to_v1`、`rejects_fixed_segment_that_differs_from_v1`、`rejects_empty_nodes`、`rejects_more_than_ten_nodes`、`rejects_bad_node_name_segment`、`rejects_peer_token_for_unknown_node_and_bad_hex`、`rejects_duplicate_peer_token_hash`、`rejects_capacity_reject_not_below_alert`、`rejects_non_positive_operational_value` 等）、`ConfigStoreTest.rejects_candidate_with_non_increasing_version_and_keeps_it`、`ConfigStoreTest.rejects_candidate_whose_policy_differs`、`ConfigStoreTest.rejects_candidate_that_changes_registered_namespaces` | 通過 | schema 合法性、version 嚴格遞增、policy 段相等、fixed 段等於 v1 常數、token 雜湊唯一皆有覆蓋 |
+| P02-04 安全啟用 | Task 2、3、3R | `ConfigStoreTest.activates_valid_candidate_and_rotates_active_to_lkg`、`ConfigStoreTest.accepts_candidate_that_only_changes_operational_and_node_order`、`PolicyEndpointTest.config_is_immutable_while_process_runs` | 通過 | 驗證通過才 rename；運行期改 `active.json` 檔案內容不影響記憶體中設定 |
+| P02-05 失敗與回退 | Task 2、2R、3 | `ConfigStoreTest.rejects_malformed_candidate_and_keeps_active`、`falls_back_to_lkg_when_active_missing`、`falls_back_to_lkg_when_active_is_corrupt`、`corrupt_active_does_not_overwrite_good_lkg_when_candidate_activates`、`corrupt_active_without_lkg_refuses_even_with_good_candidate`、`candidate_alone_does_not_bypass_manual_initial_active_setup`、`candidate_is_validated_against_lkg_when_active_missing`、`PolicyEndpointTest.config_metrics_are_registered_with_node_tag`（`activation_failure_count` 基準值 0） | 通過 | 拒絕留 candidate 原地；壞 active 不覆蓋好的 lkg；candidate-only 初始化拒絕 |
+| P02-06 中斷恢復 | Task 2 | `ConfigStoreTest.crash_between_renames_recovers_on_next_start`、`ConfigStoreTest.ignores_candidate_tmp_still_being_written_by_cd` | 通過 | 設定啟用不觸碰 DB；義務與控制狀態由 schema 持有（Task 4） |
+| P02-07 schema 與冪等 bootstrap | Task 4 | `SchemaTest.migration_runs_in_background_and_creates_all_tables`、`SchemaTest.node_meta_has_one_incarnation_and_seq_counters_start_at_zero`、`SchemaTest.bootstrap_is_idempotent_across_restarts`、`SchemaTest.obligation_state_check_constraint_rejects_unknown_state`、`SchemaTest.remote_received_keeps_source_selected_path_without_local_source_row` | 通過 | 含 `received.content_path`、非零計數器保留；欄位改名見 design-decisions「P02 偏差」⑥ |
+| P02-08 DB 故障恢復 | Task 4、5 | `DbOutageRecoveryTest.db_becomes_ready_without_restart_after_outage` | 通過 | DB 不可用時 process 不退出、`/policy` 仍回應；DB 恢復後不重啟即轉 ready（`gigaxfer.db-retry-millis` 測試縮短為 200ms） |
+| P02-09 health 語意 | Task 5 | `HealthEndpointTest.readiness_is_up_when_db_migrated_and_nfs_root_reachable`、`HealthEndpointTest.nfs_component_is_down_when_root_disappears_and_recovers`、`HealthEndpointTest.liveness_does_not_depend_on_db_or_nfs`、`NfsTimeoutHealthTest.nfs_component_is_down_when_probe_times_out` | 通過 | 含 NFS timeout；liveness 只看 process 存活，不受 DB/NFS 影響 |
+| P02-10 Node 認證 | Task 6 | `NodeAuthFilterTest`（10 個測試：`own_token_is_read_from_secret_file_and_trimmed`、`missing_authorization_is_401`、`unknown_token_is_401`、`non_bearer_scheme_is_401`、`known_token_resolves_caller_node`、`target_param_equal_to_caller_is_allowed`、`target_param_different_from_caller_is_403`、`node_internal_endpoints_need_no_token`、`protected_prefixes_cover_file_subpaths`、`received_does_not_apply_target_equals_caller_rule`） | 通過 | 401 = 無/未知 token；403 = target 與 caller 不同（D14 修 2） |
+| P02-11 角色身分 | Task 6 | `NodeAuthFilterTest.known_token_resolves_caller_node`、`NodeAuthFilterTest.target_param_different_from_caller_is_403`、`NodeAuthFilterTest.received_does_not_apply_target_equals_caller_rule` | 通過 | `/received` 不套用 target==caller 規則；「只列 caller 為 Source 的列」的實作留給 P04 |
+| P02-12 可交接可重現 | Task 7 | `gigaxfer-sync-service/README.md`、本檔（`docs/validation/P02-validation.md`）、`mvn test` 126/126 全綠 | 通過 | 含首次初始化、設定更新/回退操作、DB 斷線觀察、認證 curl 範例、health/metrics 範例、HTTPS 部署要求 |
+
+## 尚未驗證
+
+以下項目在本環境無法驗收，需在對應的實機/部署環境另行驗證：
+
+- **Oracle 實機**：schema／DDL 只在 H2 2.3 `MODE=Oracle` 驗證過；未對真實 Oracle（保留字、型別轉換、鎖行為、Flyway `flyway-database-oracle` 方言）跑過。
+- **真實 NAS**：NFS mount 以本機檔案系統模擬；ESTALE、lock 語意、實際逾時／busy 行為、failover 時的穩定寫入（D12 修 2）未驗證。
+- **HTTPS**：`server.ssl.*` 部署設定未套用；所有測試與本地執行走明文 HTTP。
+- **跨 Node（多主機）**：`NodeAuthFilterTest` 等認證測試在單一 process 內以多組 token 模擬多個呼叫者身分，未在實際跨主機部署下驗證多個 sync-service process 互相呼叫。
+- 真實檔案大小分佈下的壓測（吞吐、延遲、rebuild 時間等）——沿用「驗收審查 5」既有結論，本輪未新增量測。
+
+## Parked（已知、非本輪修正範圍）
+
+- `ConfigActivation.activationFailure` 為單一 `Optional<String>` 原因欄位：一次 candidate 驗證若同時觸發多條失敗規則，只會保留其中一則訊息，其餘原因不會並列呈現。
+- `DbBootstrap.stop()`（`SmartLifecycle`）只對背景重試執行緒呼叫 `interrupt()`，未 `join()` 等待其真正結束；正常關閉流程下屬良性競態，但測試或工具化關閉時無法保證該執行緒已完全停止。
+- `SchemaTest` 驗證表存在、欄位、CHECK 約束與冪等 bootstrap，但未斷言索引（`ix_obligation_target_state_next` 等）確實建立；索引目前僅來自遷移腳本本身。
+- 設計文件 `docs/design/system-design.md` §14 obligation 表義務欄位列出索引「(target_node, state, next_attempt_at)；(state, source_ready_at) 供 age；(target_node, completed_seq)」，但 `V1__schema.sql` 的 `obligation` 表沒有 `source_ready_at` 欄位（該欄位屬於 `file_identity`），也未建立 `(state, source_ready_at)` 索引；此落差未在本輪核准修正，留待設計決策裁定索引欄位或改用 `file_identity` join。
+- `FinalizeUnderPressureTest`（P01 既有，非本輪異動）以背景執行緒占用唯一 NFS 執行器槽位、100ms timeout 斷言 `UNAVAILABLE`，為時序敏感測試；本輪執行未見失敗，但排程延遲仍可能造成偶發不穩定，未額外加固。

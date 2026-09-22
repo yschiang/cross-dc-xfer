@@ -24,7 +24,7 @@ Target 端不寫 `.manifest` 與 `.evidence`；基準在 Source manifest 與 Tar
 
 | 檔案 | 建 | 讀 | 刪 | 生命週期 | 決策 |
 | --- | --- | --- | --- | --- | --- |
-| `candidate.json.tmp` → `candidate.json` | CD pipeline 寫 tmp 後 rename | sync service 驗證 | 驗證後 rename 為 active，或驗證失敗留原地並上報 | 一次性 | D17 |
+| `candidate.json.tmp` → `candidate.json` | CD pipeline 寫 tmp 後 rename | sync service 驗證 | 驗證後 rename 為 active，或驗證失敗留原地並上報 | 一次性；sync service 只認 `candidate.json`，`.tmp` 一律忽略 | D17 |
 | `active.json` | sync service 啟動時由 candidate rename | sync service 啟動讀一次、`/policy` | 下一版啟用時 rename 為 lkg | 當前生效版本 | D17, D18 |
 | `lkg.json` | sync service 由 active rename | sync service 啟動時 active 缺失的備援 | 下一版啟用時被覆蓋 | 上一個成功版本 | D17 |
 | Node token 秘密檔（路徑由部署決定） | ops 部署時放置，不進 git | sync service 啟動讀取，作為呼叫他 Node 時的憑證；驗證端只持有各 Node token 的雜湊、不持明文 | 永不刪；輪替為 ops 程序（operational policy 可調項），新值覆寫 | 每 Node 一份，輪替時覆寫 | D14 修, D14 修 2, D30 |
