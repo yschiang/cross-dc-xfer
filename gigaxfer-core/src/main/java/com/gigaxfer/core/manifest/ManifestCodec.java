@@ -2,6 +2,7 @@ package com.gigaxfer.core.manifest;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
@@ -19,6 +20,12 @@ public final class ManifestCodec {
         .addModule(new JavaTimeModule())
         .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
         .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+        // 固定 schema：record 的每個欄位都必填。沒有這三項時 Jackson 對缺席或 null 的 primitive
+        // 補 0，並把 "12"、1.5 強制轉成 long——缺 size 的損壞宣告會被當成 size=0 的有效宣告（P01-03）。
+        .enable(DeserializationFeature.FAIL_ON_MISSING_CREATOR_PROPERTIES)
+        .enable(DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES)
+        .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
+        .disable(MapperFeature.ALLOW_COERCION_OF_SCALARS)
         .build();
 
     public byte[] encode(Manifest m) {

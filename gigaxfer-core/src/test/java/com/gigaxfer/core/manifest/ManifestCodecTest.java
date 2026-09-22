@@ -50,6 +50,34 @@ class ManifestCodecTest {
         assertThatThrownBy(() -> codec.decode(s.getBytes(StandardCharsets.UTF_8))).isInstanceOf(MalformedManifestException.class);
     }
 
+    /** P01-03：primitive 欄位缺席時 Jackson 預設補 0，缺 size 的宣告不得被當成 size=0 的有效宣告。 */
+    @Test
+    void missing_size_is_malformed() {
+        String s = new String(codec.encode(m), StandardCharsets.UTF_8).replace("\"size\":1048576,", "");
+        assertThatThrownBy(() -> codec.decode(s.getBytes(StandardCharsets.UTF_8))).isInstanceOf(MalformedManifestException.class);
+    }
+
+    @Test
+    void null_size_is_malformed() {
+        String s = new String(codec.encode(m), StandardCharsets.UTF_8).replace("\"size\":1048576", "\"size\":null");
+        assertThatThrownBy(() -> codec.decode(s.getBytes(StandardCharsets.UTF_8))).isInstanceOf(MalformedManifestException.class);
+    }
+
+    @Test
+    void missing_schema_version_is_malformed() {
+        String s = new String(codec.encode(m), StandardCharsets.UTF_8).replace("\"schema_version\":1,", "");
+        assertThatThrownBy(() -> codec.decode(s.getBytes(StandardCharsets.UTF_8))).isInstanceOf(MalformedManifestException.class);
+    }
+
+    /** 型別不符也是損壞：不得把 "12" 或 1.5 強制轉成 size。 */
+    @Test
+    void non_integer_size_is_malformed() {
+        for (String bad : new String[]{"\"size\":\"1048576\"", "\"size\":1048576.5"}) {
+            String s = new String(codec.encode(m), StandardCharsets.UTF_8).replace("\"size\":1048576", bad);
+            assertThatThrownBy(() -> codec.decode(s.getBytes(StandardCharsets.UTF_8))).as(bad).isInstanceOf(MalformedManifestException.class);
+        }
+    }
+
     @Test
     void bad_digest_is_malformed() {
         String s = new String(codec.encode(m), StandardCharsets.UTF_8)
