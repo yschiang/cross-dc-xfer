@@ -2,8 +2,7 @@ package com.gigaxfer.core.store;
 
 import com.gigaxfer.core.digest.Sha256;
 import com.gigaxfer.core.identity.FileIdentity;
-import com.gigaxfer.core.nfs.NfsBusyException;
-import com.gigaxfer.core.nfs.NfsTimeoutException;
+import com.gigaxfer.core.nfs.NfsException;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -29,6 +28,8 @@ public final class WriteHandle implements AutoCloseable {
     private long size;
     private String digest; // 第①步 fsync 後固定，之後不再改（IR-01）
     private boolean discarded;
+    private boolean failed;
+    private String failedOp;
 
     WriteHandle(LocalStore store, FileIdentity id, String dataClass, UUID uuid, Path writing, FileChannel channel) {
         this.store = store;
@@ -48,12 +49,15 @@ public final class WriteHandle implements AutoCloseable {
         return writing;
     }
 
-    /** Application 寫內容的串流；每次底層 write 經有界執行器。 */
+    /**
+     * Application 寫內容的串流；每次底層 write 經有界執行器。
+     * 內部緩衝只在 {@link #finalizeWrite()} 時被 flush；{@link #close()} 不 flush。
+     */
     public OutputStream stream() {
         return stream;
     }
 
-    /** 只允許 Finalize 前（CONTEXT.md Discard）。 */
+    /** 只允許 Finalize 前（CONTEXT.md Discard）。write 失敗（poisoned）後仍允許。 */
     public void discard() throws IOException {
         if (digest != null) throw new IllegalStateException("cannot discard after finalize started");
         discarded = true;
@@ -62,8 +66,8 @@ public final class WriteHandle implements AutoCloseable {
                 channel.close();
                 Files.deleteIfExists(writing);
             });
-        } catch (NfsBusyException | NfsTimeoutException e) {
-            throw new NfsUnavailableException("discard-writing", e);
+        } catch (NfsException e) {
+            throw new NfsUnavailableException(e.op(), e);
         }
     }
 
@@ -71,13 +75,18 @@ public final class WriteHandle implements AutoCloseable {
     // "finalize()" on a concrete class is a compile error (return type not
     // substitutable for Object.finalize()'s void). Task 8 implements the body.
     public FinalizeResult finalizeWrite() {
+        if (failed) return new FinalizeResult.Failure(FailureReason.IO, "stream failed at " + failedOp);
         throw new UnsupportedOperationException("Task 8");
     }
 
-    /** 只關通道，不刪任何檔：PENDING_CONFIRMATION 後 Application 仍可重呼 finalize。 */
+    /** 只關通道，不刪任何檔：PENDING_CONFIRMATION 後 Application 仍可重呼 finalizeWrite。 */
     @Override
     public void close() throws IOException {
-        channel.close();
+        try {
+            store.nfs.run("close-writing", channel::close);
+        } catch (NfsException e) {
+            throw new NfsUnavailableException(e.op(), e);
+        }
     }
 
     private final class ChannelStream extends OutputStream {
@@ -89,13 +98,16 @@ public final class WriteHandle implements AutoCloseable {
         @Override
         public void write(byte[] b, int off, int len) throws IOException {
             if (discarded) throw new IOException("handle discarded");
+            if (failed) throw new IOException("handle failed");
             ByteBuffer buf = ByteBuffer.wrap(b, off, len);
             try {
                 store.nfs.run("write", () -> {
                     while (buf.hasRemaining()) channel.write(buf);
                 });
-            } catch (NfsBusyException | NfsTimeoutException e) {
-                throw new NfsUnavailableException("write", e);
+            } catch (NfsException e) {
+                failed = true;
+                failedOp = e.op();
+                throw new NfsUnavailableException(e.op(), e);
             }
             md.update(b, off, len);
             size += len;
