@@ -5,7 +5,6 @@ import com.gigaxfer.core.identity.FileIdentity;
 import com.gigaxfer.core.manifest.Manifest;
 import com.gigaxfer.core.nfs.NfsBusyException;
 import com.gigaxfer.core.nfs.NfsException;
-import com.gigaxfer.core.nfs.NfsTimeoutException;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -117,16 +116,14 @@ public final class WriteHandle implements AutoCloseable {
      *    → rediscovery：&lt;key&gt; 已在且 digest 符 → SUCCESS；不在且宣告超過 N → DECLARATION_EXPIRED
      * ③ link(.writing → content_path/&lt;key&gt;) = commit point
      * ④ best-effort 清暫存
-     * 任一步 timeout / pool 滿 → PENDING_CONFIRMATION；重呼走同一序列。
+     * ① 的 flush 屬於寫入：失敗或 timeout → handle 中毒，本次與之後都回 FAILURE(IO)。
+     * 其餘步驟（fsync 起）timeout / pool 滿 → PENDING_CONFIRMATION；重呼走同一序列。
      *
      * <p>ponytail: 名為 finalizeWrite() 而非 finalize()——具體類別上 public 非 void 的
      * "finalize()" 是編譯錯誤（回傳型別不可替代 Object.finalize() 的 void）。
      */
     public FinalizeResult finalizeWrite() {
-        if (failed) {
-            cleanupTemps();
-            return new FinalizeResult.Failure(FailureReason.IO, "stream failed at " + failedOp);
-        }
+        if (failed) return poisoned();
         if (discarded) return new FinalizeResult.Failure(FailureReason.IO, "handle discarded");
         try {
             // ①：digest != null 代表已 fsync 過，重呼時不再 flush（通道已關，flush 會丟 ClosedChannelException）。
@@ -134,7 +131,13 @@ public final class WriteHandle implements AutoCloseable {
             // （關通道的 thread 若被遺棄就再也 force 不了 → 永久 Failure）。耐久性由 force 保證，
             // close 只是還資源，失敗無所謂，所以走 best-effort。
             if (digest == null) {
-                stream.flush();
+                // flush 屬於寫入：失敗或 timeout 都已由 ChannelStream 毒化 handle → 直接 FAILURE，
+                // 不先回 PendingConfirmation。commit point 從未被踩到，交易重來是安全的。
+                try {
+                    stream.flush();
+                } catch (IOException e) {
+                    return poisoned();
+                }
                 // 若上一次呼叫已經 close() 過（例如 PendingConfirmation 後 Application 用了
                 // try-with-resources），channel 已關閉：重新在 writing 上開一個臨時 channel 來
                 // force。POSIX fsync 對同一 inode 的任何 descriptor 都會把資料落盤，durability
@@ -241,14 +244,16 @@ public final class WriteHandle implements AutoCloseable {
         } catch (NfsException e) {
             return new FinalizeResult.PendingConfirmation(e.op(),
                 e instanceof NfsBusyException ? "nfs pool exhausted" : "nfs timeout");
-        } catch (NfsUnavailableException e) {
-            // ① 的 stream.flush() 踩到 busy/timeout：結果未知，不等於失敗（SR-04）。PendingConfirmation 不清暫存
-            return new FinalizeResult.PendingConfirmation(e.op(),
-                e.getCause() instanceof NfsTimeoutException ? "nfs timeout" : "nfs pool exhausted");
         } catch (IOException e) {
             cleanupTemps();
             return new FinalizeResult.Failure(FailureReason.IO, e.toString());
         }
+    }
+
+    /** 寫入（含 finalize 第①步的 flush）失敗過的 handle：內容不可信，永不發布。 */
+    private FinalizeResult poisoned() {
+        cleanupTemps();
+        return new FinalizeResult.Failure(FailureReason.IO, "stream failed at " + failedOp);
     }
 
     /** 重試路徑的當下證據（D44）：重讀 &lt;key&gt; 算 digest 對 manifest。 */

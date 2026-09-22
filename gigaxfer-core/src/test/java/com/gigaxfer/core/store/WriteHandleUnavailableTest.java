@@ -93,6 +93,35 @@ class WriteHandleUnavailableTest {
         assertThat(h.writingPath()).doesNotExist();
     }
 
+    /**
+     * 定案契約：finalizeWrite() 第①步的 flush 屬於寫入。flush timeout 或寫入錯誤 → handle 中毒，
+     * 該次 finalizeWrite() 就直接回 Failure（不先回 PendingConfirmation），之後每次也一樣；不宣告、清掉暫存。
+     * 只有 fsync（force）結果未知才回 PendingConfirmation（見 FinalizeRetryTest）。
+     */
+    @Test
+    void flush_timeout_in_finalize_is_immediate_failure_not_pending() throws Exception {
+        assertFlushFailureIsImmediateFailure("F1", FaultInjectingNfs::dropBefore);
+    }
+
+    @Test
+    void flush_io_error_in_finalize_is_immediate_failure() throws Exception {
+        assertFlushFailureIsImmediateFailure("F2", FaultInjectingNfs::failBefore);
+    }
+
+    private void assertFlushFailureIsImmediateFailure(String key, java.util.function.BiConsumer<FaultInjectingNfs, String> fault) throws Exception {
+        FaultInjectingNfs nfs = new FaultInjectingNfs(real);
+        LocalStore store = new LocalStore("P3", layout, nfs, WriteGate.open(), clock);
+        WriteHandle h = store.beginWrite("mes", "metrology", key);
+        h.stream().write("short".getBytes(java.nio.charset.StandardCharsets.UTF_8)); // 留在緩衝，finalize 的 flush 才寫出
+        fault.accept(nfs, "write");
+
+        FinalizeResult expected = new FinalizeResult.Failure(FailureReason.IO, "stream failed at write");
+        assertThat(h.finalizeWrite()).isEqualTo(expected);
+        assertThat(h.finalizeWrite()).isEqualTo(expected);
+        assertThat(layout.manifestDir(new FileIdentity("P3", "mes", key))).doesNotExist();
+        assertThat(h.writingPath()).doesNotExist();
+    }
+
     @Test
     void discard_failure_surfaces_as_nfs_unavailable() throws Exception {
         WriteHandle h = store().beginWrite("mes", "metrology", "L2");
