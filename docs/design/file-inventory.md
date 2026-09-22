@@ -33,7 +33,7 @@ Target 端不寫 `.manifest` 與 `.evidence`；基準在 Source manifest 與 Tar
 
 | 檔案 | 建 | 讀 | 刪 | 生命週期 | 決策 |
 | --- | --- | --- | --- | --- | --- |
-| `<app data dir>/gigaxfer-policy.json`（D23 修） | library 每次成功 `GET /policy` 後覆寫 | library 啟動且 sync service 不可達時 | 永不刪 | 最近一次成功取得的 Policy 段 | D18 |
+| `<app data dir>/file-sync-policy.json`（D23 修） | library 每次成功 `GET /policy` 後覆寫 | library 啟動且 sync service 不可達時 | 永不刪 | 最近一次成功取得的 Policy 段 | D18 |
 
 ## 不存在的檔案（已否決）
 

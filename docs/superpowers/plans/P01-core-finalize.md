@@ -1,8 +1,8 @@
-# P01 — gigaxfer-core Finalize 協議 Implementation Plan
+# P01 — file-sync-core Finalize 協議 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **執行方式：** 本文件是既有 implementation plan 範例，可用 Superpowers、OpenSpec 或其他工具執行。工具選擇與交接遵循 [README 工作流](../../../README.md#工作流)；若轉用另一份計畫，保留本文件連結並明確標示新的權威版本，避免重複維護。Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 交付 `gigaxfer-core` 模組：Application 端 library 的 beginWrite / write / finalize / discard 完整協議，在本機檔案系統上以測試證明 F1–F5b、F18（library 側）全部封閉。
+**Goal:** 交付 `file-sync-core` 模組：Application 端 library 的 beginWrite / write / finalize / discard 完整協議，在本機檔案系統上以測試證明 F1–F5b、F18（library 側）全部封閉。
 
 **Architecture:** 純 Java 21 模組，無 Spring、無 DB。NFS 是唯一真相：`<key>.manifest` 以 tmp + link 原子宣告，`<key>` 以跨目錄 link 原子發布（commit point）。每個檔案系統操作經有界執行器（固定槽、無佇列、timeout 不釋放槽）。Finalize 冪等：同一 handle 重呼走同一序列，每步以 EEXIST / 存在性 / digest 判定。
 
@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Java 21；`gigaxfer-core` 不得依賴 Spring、任何 DB driver。
+- Java 21；`file-sync-core` 不得依賴 Spring、任何 DB driver。
 - 每個檔案系統操作必須經 `NfsExecutor.call/run`；Application thread 不直接呼叫 `java.nio.file.Files`（D51）。
 - 永不整檔進記憶體：digest 以串流計算，讀檔用 64 KB buffer（D4、§2.4 硬規則）。
 - digest 格式：`sha256:` + 64 個小寫 hex。
@@ -21,7 +21,7 @@
 - `content_path` 存相對 root、`/` 分隔的字串，兩端 Node 鏡像（D48）。
 - 宣告年齡上限 N = 7 天為 v1 固定常數，不從設定讀（D30 修 5、D53 修）。
 - Logical key 保留字尾：不得以 `.writing`、`.tmp` 結尾，不得含 `.manifest`；三段皆不得含 `/`、NUL，不得以 `.` 開頭（SR-01 Application 義務）。
-- 每個 task 以 `mvn -q -pl gigaxfer-core test` 綠燈結束並 commit。
+- 每個 task 以 `mvn -q -pl file-sync-core test` 綠燈結束並 commit。
 
 ---
 
@@ -29,12 +29,12 @@
 
 **Files:**
 - Create: `pom.xml`
-- Create: `gigaxfer-core/pom.xml`
+- Create: `file-sync-core/pom.xml`
 - Create: `.gitignore`（追加）
-- Test: `gigaxfer-core/src/test/java/com/gigaxfer/core/SmokeTest.java`
+- Test: `file-sync-core/src/test/java/com/example/filesync/core/SmokeTest.java`
 
 **Interfaces:**
-- Produces: 模組 `com.gigaxfer:gigaxfer-core:0.1.0-SNAPSHOT`，後續所有 task 在此模組內。
+- Produces: 模組 `com.example.filesync:file-sync-core:0.1.0-SNAPSHOT`，後續所有 task 在此模組內。
 
 - [ ] **Step 1: 寫 parent pom**
 
@@ -44,13 +44,13 @@
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
-  <groupId>com.gigaxfer</groupId>
-  <artifactId>gigaxfer-parent</artifactId>
+  <groupId>com.example.filesync</groupId>
+  <artifactId>file-sync-parent</artifactId>
   <version>0.1.0-SNAPSHOT</version>
   <packaging>pom</packaging>
 
   <modules>
-    <module>gigaxfer-core</module>
+    <module>file-sync-core</module>
   </modules>
 
   <properties>
@@ -106,7 +106,7 @@
 
 - [ ] **Step 2: 寫 core 模組 pom**
 
-`gigaxfer-core/pom.xml`：
+`file-sync-core/pom.xml`：
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -115,11 +115,11 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <parent>
-    <groupId>com.gigaxfer</groupId>
-    <artifactId>gigaxfer-parent</artifactId>
+    <groupId>com.example.filesync</groupId>
+    <artifactId>file-sync-parent</artifactId>
     <version>0.1.0-SNAPSHOT</version>
   </parent>
-  <artifactId>gigaxfer-core</artifactId>
+  <artifactId>file-sync-core</artifactId>
 
   <dependencies>
     <dependency>
@@ -154,10 +154,10 @@ target/
 
 - [ ] **Step 4: 寫 smoke test**
 
-`gigaxfer-core/src/test/java/com/gigaxfer/core/SmokeTest.java`：
+`file-sync-core/src/test/java/com/example/filesync/core/SmokeTest.java`：
 
 ```java
-package com.gigaxfer.core;
+package com.example.filesync.core;
 
 import org.junit.jupiter.api.Test;
 
@@ -173,14 +173,14 @@ class SmokeTest {
 
 - [ ] **Step 5: 跑測試**
 
-Run: `mvn -q -pl gigaxfer-core test`
+Run: `mvn -q -pl file-sync-core test`
 Expected: BUILD SUCCESS，1 test passed。
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add pom.xml gigaxfer-core/pom.xml .gitignore gigaxfer-core/src/test/java/com/gigaxfer/core/SmokeTest.java
-git commit -m "build: maven multi-module skeleton with gigaxfer-core"
+git add pom.xml file-sync-core/pom.xml .gitignore file-sync-core/src/test/java/com/example/filesync/core/SmokeTest.java
+git commit -m "build: maven multi-module skeleton with file-sync-core"
 ```
 
 ---
@@ -188,8 +188,8 @@ git commit -m "build: maven multi-module skeleton with gigaxfer-core"
 ### Task 2: SHA-256 串流工具
 
 **Files:**
-- Create: `gigaxfer-core/src/main/java/com/gigaxfer/core/digest/Sha256.java`
-- Test: `gigaxfer-core/src/test/java/com/gigaxfer/core/digest/Sha256Test.java`
+- Create: `file-sync-core/src/main/java/com/example/filesync/core/digest/Sha256.java`
+- Test: `file-sync-core/src/test/java/com/example/filesync/core/digest/Sha256Test.java`
 
 **Interfaces:**
 - Produces: `Sha256.newDigest(): MessageDigest`、`Sha256.format(MessageDigest): String`（`sha256:<hex>`）、`Sha256.ofBytes(byte[]): String`、`Sha256.ofFile(Path): String`（串流）。
@@ -197,7 +197,7 @@ git commit -m "build: maven multi-module skeleton with gigaxfer-core"
 - [ ] **Step 1: 寫失敗測試**
 
 ```java
-package com.gigaxfer.core.digest;
+package com.example.filesync.core.digest;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -236,13 +236,13 @@ class Sha256Test {
 
 - [ ] **Step 2: 跑測試確認失敗**
 
-Run: `mvn -q -pl gigaxfer-core test -Dtest=Sha256Test`
+Run: `mvn -q -pl file-sync-core test -Dtest=Sha256Test`
 Expected: 編譯失敗，`Sha256` 不存在。
 
 - [ ] **Step 3: 實作**
 
 ```java
-package com.gigaxfer.core.digest;
+package com.example.filesync.core.digest;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -292,13 +292,13 @@ public final class Sha256 {
 
 - [ ] **Step 4: 跑測試確認通過**
 
-Run: `mvn -q -pl gigaxfer-core test -Dtest=Sha256Test`
+Run: `mvn -q -pl file-sync-core test -Dtest=Sha256Test`
 Expected: 3 tests passed。
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add gigaxfer-core/src/main/java/com/gigaxfer/core/digest gigaxfer-core/src/test/java/com/gigaxfer/core/digest
+git add file-sync-core/src/main/java/com/example/filesync/core/digest file-sync-core/src/test/java/com/example/filesync/core/digest
 git commit -m "feat(core): streaming SHA-256 digest utility"
 ```
 
@@ -307,8 +307,8 @@ git commit -m "feat(core): streaming SHA-256 digest utility"
 ### Task 3: FileIdentity
 
 **Files:**
-- Create: `gigaxfer-core/src/main/java/com/gigaxfer/core/identity/FileIdentity.java`
-- Test: `gigaxfer-core/src/test/java/com/gigaxfer/core/identity/FileIdentityTest.java`
+- Create: `file-sync-core/src/main/java/com/example/filesync/core/identity/FileIdentity.java`
+- Test: `file-sync-core/src/test/java/com/example/filesync/core/identity/FileIdentityTest.java`
 
 **Interfaces:**
 - Produces: `record FileIdentity(String sourceNode, String namespace, String logicalKey)`，建構時驗證；`IllegalArgumentException` 表示違反 SR-01 命名義務。
@@ -316,7 +316,7 @@ git commit -m "feat(core): streaming SHA-256 digest utility"
 - [ ] **Step 1: 寫失敗測試**
 
 ```java
-package com.gigaxfer.core.identity;
+package com.example.filesync.core.identity;
 
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -355,13 +355,13 @@ class FileIdentityTest {
 
 - [ ] **Step 2: 跑測試確認失敗**
 
-Run: `mvn -q -pl gigaxfer-core test -Dtest=FileIdentityTest`
+Run: `mvn -q -pl file-sync-core test -Dtest=FileIdentityTest`
 Expected: 編譯失敗。
 
 - [ ] **Step 3: 實作**
 
 ```java
-package com.gigaxfer.core.identity;
+package com.example.filesync.core.identity;
 
 /**
  * File identity = (Source Node, Namespace, Logical key)（CONTEXT.md）。
@@ -388,13 +388,13 @@ public record FileIdentity(String sourceNode, String namespace, String logicalKe
 
 - [ ] **Step 4: 跑測試確認通過**
 
-Run: `mvn -q -pl gigaxfer-core test -Dtest=FileIdentityTest`
+Run: `mvn -q -pl file-sync-core test -Dtest=FileIdentityTest`
 Expected: all passed。
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add gigaxfer-core/src/main/java/com/gigaxfer/core/identity gigaxfer-core/src/test/java/com/gigaxfer/core/identity
+git add file-sync-core/src/main/java/com/example/filesync/core/identity file-sync-core/src/test/java/com/example/filesync/core/identity
 git commit -m "feat(core): FileIdentity with SR-01 naming rules"
 ```
 
@@ -403,8 +403,8 @@ git commit -m "feat(core): FileIdentity with SR-01 naming rules"
 ### Task 4: PathLayout
 
 **Files:**
-- Create: `gigaxfer-core/src/main/java/com/gigaxfer/core/layout/PathLayout.java`
-- Test: `gigaxfer-core/src/test/java/com/gigaxfer/core/layout/PathLayoutTest.java`
+- Create: `file-sync-core/src/main/java/com/example/filesync/core/layout/PathLayout.java`
+- Test: `file-sync-core/src/test/java/com/example/filesync/core/layout/PathLayoutTest.java`
 
 **Interfaces:**
 - Consumes: `FileIdentity`、`Sha256.newDigest()`。
@@ -413,10 +413,10 @@ git commit -m "feat(core): FileIdentity with SR-01 naming rules"
 - [ ] **Step 1: 寫失敗測試**
 
 ```java
-package com.gigaxfer.core.layout;
+package com.example.filesync.core.layout;
 
-import com.gigaxfer.core.digest.Sha256;
-import com.gigaxfer.core.identity.FileIdentity;
+import com.example.filesync.core.digest.Sha256;
+import com.example.filesync.core.identity.FileIdentity;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -480,16 +480,16 @@ class PathLayoutTest {
 
 - [ ] **Step 2: 跑測試確認失敗**
 
-Run: `mvn -q -pl gigaxfer-core test -Dtest=PathLayoutTest`
+Run: `mvn -q -pl file-sync-core test -Dtest=PathLayoutTest`
 Expected: 編譯失敗。
 
 - [ ] **Step 3: 實作**
 
 ```java
-package com.gigaxfer.core.layout;
+package com.example.filesync.core.layout;
 
-import com.gigaxfer.core.digest.Sha256;
-import com.gigaxfer.core.identity.FileIdentity;
+import com.example.filesync.core.digest.Sha256;
+import com.example.filesync.core.identity.FileIdentity;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
@@ -565,13 +565,13 @@ public final class PathLayout {
 
 - [ ] **Step 4: 跑測試確認通過**
 
-Run: `mvn -q -pl gigaxfer-core test -Dtest=PathLayoutTest`
+Run: `mvn -q -pl file-sync-core test -Dtest=PathLayoutTest`
 Expected: 6 tests passed。
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add gigaxfer-core/src/main/java/com/gigaxfer/core/layout gigaxfer-core/src/test/java/com/gigaxfer/core/layout
+git add file-sync-core/src/main/java/com/example/filesync/core/layout file-sync-core/src/test/java/com/example/filesync/core/layout
 git commit -m "feat(core): PathLayout for content, manifest bucket and temp names"
 ```
 
@@ -580,10 +580,10 @@ git commit -m "feat(core): PathLayout for content, manifest bucket and temp name
 ### Task 5: Manifest 與 ManifestCodec
 
 **Files:**
-- Create: `gigaxfer-core/src/main/java/com/gigaxfer/core/manifest/Manifest.java`
-- Create: `gigaxfer-core/src/main/java/com/gigaxfer/core/manifest/ManifestCodec.java`
-- Create: `gigaxfer-core/src/main/java/com/gigaxfer/core/manifest/MalformedManifestException.java`
-- Test: `gigaxfer-core/src/test/java/com/gigaxfer/core/manifest/ManifestCodecTest.java`
+- Create: `file-sync-core/src/main/java/com/example/filesync/core/manifest/Manifest.java`
+- Create: `file-sync-core/src/main/java/com/example/filesync/core/manifest/ManifestCodec.java`
+- Create: `file-sync-core/src/main/java/com/example/filesync/core/manifest/MalformedManifestException.java`
+- Test: `file-sync-core/src/test/java/com/example/filesync/core/manifest/ManifestCodecTest.java`
 
 **Interfaces:**
 - Consumes: `FileIdentity`。
@@ -592,9 +592,9 @@ git commit -m "feat(core): PathLayout for content, manifest bucket and temp name
 - [ ] **Step 1: 寫失敗測試**
 
 ```java
-package com.gigaxfer.core.manifest;
+package com.example.filesync.core.manifest;
 
-import com.gigaxfer.core.identity.FileIdentity;
+import com.example.filesync.core.identity.FileIdentity;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -658,7 +658,7 @@ class ManifestCodecTest {
 
 - [ ] **Step 2: 跑測試確認失敗**
 
-Run: `mvn -q -pl gigaxfer-core test -Dtest=ManifestCodecTest`
+Run: `mvn -q -pl file-sync-core test -Dtest=ManifestCodecTest`
 Expected: 編譯失敗。
 
 - [ ] **Step 3: 實作**
@@ -666,11 +666,11 @@ Expected: 編譯失敗。
 `Manifest.java`：
 
 ```java
-package com.gigaxfer.core.manifest;
+package com.example.filesync.core.manifest;
 
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.annotation.JsonNaming;
-import com.gigaxfer.core.identity.FileIdentity;
+import com.example.filesync.core.identity.FileIdentity;
 
 import java.time.Instant;
 
@@ -704,7 +704,7 @@ public record Manifest(
 `MalformedManifestException.java`：
 
 ```java
-package com.gigaxfer.core.manifest;
+package com.example.filesync.core.manifest;
 
 import java.io.IOException;
 
@@ -723,7 +723,7 @@ public final class MalformedManifestException extends IOException {
 `ManifestCodec.java`：
 
 ```java
-package com.gigaxfer.core.manifest;
+package com.example.filesync.core.manifest;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -769,13 +769,13 @@ public final class ManifestCodec {
 
 - [ ] **Step 4: 跑測試確認通過**
 
-Run: `mvn -q -pl gigaxfer-core test -Dtest=ManifestCodecTest`
+Run: `mvn -q -pl file-sync-core test -Dtest=ManifestCodecTest`
 Expected: 6 tests passed。
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add gigaxfer-core/src/main/java/com/gigaxfer/core/manifest gigaxfer-core/src/test/java/com/gigaxfer/core/manifest
+git add file-sync-core/src/main/java/com/example/filesync/core/manifest file-sync-core/src/test/java/com/example/filesync/core/manifest
 git commit -m "feat(core): Manifest record and single-line JSON codec"
 ```
 
@@ -784,11 +784,11 @@ git commit -m "feat(core): Manifest record and single-line JSON codec"
 ### Task 6: NFS 有界執行器（D51）
 
 **Files:**
-- Create: `gigaxfer-core/src/main/java/com/gigaxfer/core/nfs/NfsExecutor.java`
-- Create: `gigaxfer-core/src/main/java/com/gigaxfer/core/nfs/NfsBusyException.java`
-- Create: `gigaxfer-core/src/main/java/com/gigaxfer/core/nfs/NfsTimeoutException.java`
-- Create: `gigaxfer-core/src/main/java/com/gigaxfer/core/nfs/BoundedNfsExecutor.java`
-- Test: `gigaxfer-core/src/test/java/com/gigaxfer/core/nfs/BoundedNfsExecutorTest.java`
+- Create: `file-sync-core/src/main/java/com/example/filesync/core/nfs/NfsExecutor.java`
+- Create: `file-sync-core/src/main/java/com/example/filesync/core/nfs/NfsBusyException.java`
+- Create: `file-sync-core/src/main/java/com/example/filesync/core/nfs/NfsTimeoutException.java`
+- Create: `file-sync-core/src/main/java/com/example/filesync/core/nfs/BoundedNfsExecutor.java`
+- Test: `file-sync-core/src/test/java/com/example/filesync/core/nfs/BoundedNfsExecutorTest.java`
 
 **Interfaces:**
 - Produces: `interface NfsExecutor extends AutoCloseable { <T> T call(String op, IoCallable<T>) throws NfsBusyException, NfsTimeoutException, IOException; default void run(String op, IoRunnable); void close(); }`；`NfsBusyException(op)` / `NfsTimeoutException(op)` 皆有 `op()`；`new BoundedNfsExecutor(String name, int slots, Duration timeout)`，`inUse(): int`。
@@ -796,7 +796,7 @@ git commit -m "feat(core): Manifest record and single-line JSON codec"
 - [ ] **Step 1: 寫失敗測試**
 
 ```java
-package com.gigaxfer.core.nfs;
+package com.example.filesync.core.nfs;
 
 import org.junit.jupiter.api.Test;
 
@@ -857,7 +857,7 @@ class BoundedNfsExecutorTest {
 
 - [ ] **Step 2: 跑測試確認失敗**
 
-Run: `mvn -q -pl gigaxfer-core test -Dtest=BoundedNfsExecutorTest`
+Run: `mvn -q -pl file-sync-core test -Dtest=BoundedNfsExecutorTest`
 Expected: 編譯失敗。
 
 - [ ] **Step 3: 實作**
@@ -865,7 +865,7 @@ Expected: 編譯失敗。
 `NfsExecutor.java`：
 
 ```java
-package com.gigaxfer.core.nfs;
+package com.example.filesync.core.nfs;
 
 import java.io.IOException;
 
@@ -902,7 +902,7 @@ public interface NfsExecutor extends AutoCloseable {
 `NfsBusyException.java`：
 
 ```java
-package com.gigaxfer.core.nfs;
+package com.example.filesync.core.nfs;
 
 /** 有界執行器已滿：呼叫者立即得知，不排隊（D51）。 */
 public final class NfsBusyException extends Exception {
@@ -922,7 +922,7 @@ public final class NfsBusyException extends Exception {
 `NfsTimeoutException.java`：
 
 ```java
-package com.gigaxfer.core.nfs;
+package com.example.filesync.core.nfs;
 
 /** 操作結果未知：呼叫者不再等待，但底層 syscall 仍在進行、槽位仍被占用（D51、SR-04）。 */
 public final class NfsTimeoutException extends Exception {
@@ -942,7 +942,7 @@ public final class NfsTimeoutException extends Exception {
 `BoundedNfsExecutor.java`：
 
 ```java
-package com.gigaxfer.core.nfs;
+package com.example.filesync.core.nfs;
 
 import java.io.IOException;
 import java.time.Duration;
@@ -1011,13 +1011,13 @@ public final class BoundedNfsExecutor implements NfsExecutor {
 
 - [ ] **Step 4: 跑測試確認通過**
 
-Run: `mvn -q -pl gigaxfer-core test -Dtest=BoundedNfsExecutorTest`
+Run: `mvn -q -pl file-sync-core test -Dtest=BoundedNfsExecutorTest`
 Expected: 3 tests passed。
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add gigaxfer-core/src/main/java/com/gigaxfer/core/nfs gigaxfer-core/src/test/java/com/gigaxfer/core/nfs
+git add file-sync-core/src/main/java/com/example/filesync/core/nfs file-sync-core/src/test/java/com/example/filesync/core/nfs
 git commit -m "feat(core): bounded NFS executor with no-queue reject and non-releasing timeout"
 ```
 
@@ -1026,14 +1026,14 @@ git commit -m "feat(core): bounded NFS executor with no-queue reject and non-rel
 ### Task 7: beginWrite、串流寫入、discard
 
 **Files:**
-- Create: `gigaxfer-core/src/main/java/com/gigaxfer/core/store/WriteGate.java`
-- Create: `gigaxfer-core/src/main/java/com/gigaxfer/core/store/WriteRejectedException.java`
-- Create: `gigaxfer-core/src/main/java/com/gigaxfer/core/store/FinalizeResult.java`
-- Create: `gigaxfer-core/src/main/java/com/gigaxfer/core/store/FailureReason.java`
-- Create: `gigaxfer-core/src/main/java/com/gigaxfer/core/store/LocalStore.java`
-- Create: `gigaxfer-core/src/main/java/com/gigaxfer/core/store/WriteHandle.java`（本 task 只有 stream / discard，finalize 於 Task 8 補）
-- Test: `gigaxfer-core/src/test/java/com/gigaxfer/core/store/BeginWriteTest.java`
-- Test helper: `gigaxfer-core/src/test/java/com/gigaxfer/core/store/MutableClock.java`
+- Create: `file-sync-core/src/main/java/com/example/filesync/core/store/WriteGate.java`
+- Create: `file-sync-core/src/main/java/com/example/filesync/core/store/WriteRejectedException.java`
+- Create: `file-sync-core/src/main/java/com/example/filesync/core/store/FinalizeResult.java`
+- Create: `file-sync-core/src/main/java/com/example/filesync/core/store/FailureReason.java`
+- Create: `file-sync-core/src/main/java/com/example/filesync/core/store/LocalStore.java`
+- Create: `file-sync-core/src/main/java/com/example/filesync/core/store/WriteHandle.java`（本 task 只有 stream / discard，finalize 於 Task 8 補）
+- Test: `file-sync-core/src/test/java/com/example/filesync/core/store/BeginWriteTest.java`
+- Test helper: `file-sync-core/src/test/java/com/example/filesync/core/store/MutableClock.java`
 
 **Interfaces:**
 - Consumes: `PathLayout`、`NfsExecutor`、`FileIdentity`、`Sha256`。
@@ -1047,7 +1047,7 @@ git commit -m "feat(core): bounded NFS executor with no-queue reject and non-rel
 - [ ] **Step 1: 寫測試用 MutableClock**
 
 ```java
-package com.gigaxfer.core.store;
+package com.example.filesync.core.store;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -1086,10 +1086,10 @@ final class MutableClock extends Clock {
 - [ ] **Step 2: 寫失敗測試**
 
 ```java
-package com.gigaxfer.core.store;
+package com.example.filesync.core.store;
 
-import com.gigaxfer.core.layout.PathLayout;
-import com.gigaxfer.core.nfs.BoundedNfsExecutor;
+import com.example.filesync.core.layout.PathLayout;
+import com.example.filesync.core.nfs.BoundedNfsExecutor;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -1178,7 +1178,7 @@ class BeginWriteTest {
 
 - [ ] **Step 3: 跑測試確認失敗**
 
-Run: `mvn -q -pl gigaxfer-core test -Dtest=BeginWriteTest`
+Run: `mvn -q -pl file-sync-core test -Dtest=BeginWriteTest`
 Expected: 編譯失敗。
 
 - [ ] **Step 4: 實作介面與結果型別**
@@ -1186,7 +1186,7 @@ Expected: 編譯失敗。
 `WriteGate.java`：
 
 ```java
-package com.gigaxfer.core.store;
+package com.example.filesync.core.store;
 
 import java.util.Optional;
 
@@ -1205,7 +1205,7 @@ public interface WriteGate {
 `WriteRejectedException.java`：
 
 ```java
-package com.gigaxfer.core.store;
+package com.example.filesync.core.store;
 
 public final class WriteRejectedException extends Exception {
     public enum Reason { REJECTED, UNAVAILABLE, IO }
@@ -1226,7 +1226,7 @@ public final class WriteRejectedException extends Exception {
 `FailureReason.java`：
 
 ```java
-package com.gigaxfer.core.store;
+package com.example.filesync.core.store;
 
 public enum FailureReason { CONFLICT, DECLARATION_EXPIRED, IO }
 ```
@@ -1234,9 +1234,9 @@ public enum FailureReason { CONFLICT, DECLARATION_EXPIRED, IO }
 `FinalizeResult.java`：
 
 ```java
-package com.gigaxfer.core.store;
+package com.example.filesync.core.store;
 
-import com.gigaxfer.core.identity.FileIdentity;
+import com.example.filesync.core.identity.FileIdentity;
 
 /** SR-04 三態。PendingConfirmation 表示結果未知，Application 重呼 finalize() 查證。 */
 public sealed interface FinalizeResult {
@@ -1251,14 +1251,14 @@ public sealed interface FinalizeResult {
 - [ ] **Step 5: 實作 LocalStore**
 
 ```java
-package com.gigaxfer.core.store;
+package com.example.filesync.core.store;
 
-import com.gigaxfer.core.identity.FileIdentity;
-import com.gigaxfer.core.layout.PathLayout;
-import com.gigaxfer.core.manifest.ManifestCodec;
-import com.gigaxfer.core.nfs.NfsBusyException;
-import com.gigaxfer.core.nfs.NfsExecutor;
-import com.gigaxfer.core.nfs.NfsTimeoutException;
+import com.example.filesync.core.identity.FileIdentity;
+import com.example.filesync.core.layout.PathLayout;
+import com.example.filesync.core.manifest.ManifestCodec;
+import com.example.filesync.core.nfs.NfsBusyException;
+import com.example.filesync.core.nfs.NfsExecutor;
+import com.example.filesync.core.nfs.NfsTimeoutException;
 
 import java.io.IOException;
 import java.nio.channels.FileChannel;
@@ -1316,12 +1316,12 @@ public final class LocalStore {
 - [ ] **Step 6: 實作 WriteHandle（stream / discard / close；finalize 先丟 UnsupportedOperationException）**
 
 ```java
-package com.gigaxfer.core.store;
+package com.example.filesync.core.store;
 
-import com.gigaxfer.core.digest.Sha256;
-import com.gigaxfer.core.identity.FileIdentity;
-import com.gigaxfer.core.nfs.NfsBusyException;
-import com.gigaxfer.core.nfs.NfsTimeoutException;
+import com.example.filesync.core.digest.Sha256;
+import com.example.filesync.core.identity.FileIdentity;
+import com.example.filesync.core.nfs.NfsBusyException;
+import com.example.filesync.core.nfs.NfsTimeoutException;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -1430,13 +1430,13 @@ public final class WriteHandle implements AutoCloseable {
 
 - [ ] **Step 7: 跑測試確認通過**
 
-Run: `mvn -q -pl gigaxfer-core test -Dtest=BeginWriteTest`
+Run: `mvn -q -pl file-sync-core test -Dtest=BeginWriteTest`
 Expected: 5 tests passed。
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add gigaxfer-core/src/main/java/com/gigaxfer/core/store gigaxfer-core/src/test/java/com/gigaxfer/core/store
+git add file-sync-core/src/main/java/com/example/filesync/core/store file-sync-core/src/test/java/com/example/filesync/core/store
 git commit -m "feat(core): LocalStore.beginWrite, streaming write and discard"
 ```
 
@@ -1445,8 +1445,8 @@ git commit -m "feat(core): LocalStore.beginWrite, streaming write and discard"
 ### Task 8: Finalize 正常路徑（①②③④）
 
 **Files:**
-- Modify: `gigaxfer-core/src/main/java/com/gigaxfer/core/store/WriteHandle.java`（取代 `finalize()` 與補 private 方法）
-- Test: `gigaxfer-core/src/test/java/com/gigaxfer/core/store/FinalizeHappyPathTest.java`
+- Modify: `file-sync-core/src/main/java/com/example/filesync/core/store/WriteHandle.java`（取代 `finalize()` 與補 private 方法）
+- Test: `file-sync-core/src/test/java/com/example/filesync/core/store/FinalizeHappyPathTest.java`
 
 **Interfaces:**
 - Consumes: Task 7 的 `WriteHandle` 內部欄位、`ManifestCodec`、`Manifest`、`PathLayout`、`Sha256.ofFile`。
@@ -1455,14 +1455,14 @@ git commit -m "feat(core): LocalStore.beginWrite, streaming write and discard"
 - [ ] **Step 1: 寫失敗測試**
 
 ```java
-package com.gigaxfer.core.store;
+package com.example.filesync.core.store;
 
-import com.gigaxfer.core.digest.Sha256;
-import com.gigaxfer.core.identity.FileIdentity;
-import com.gigaxfer.core.layout.PathLayout;
-import com.gigaxfer.core.manifest.Manifest;
-import com.gigaxfer.core.manifest.ManifestCodec;
-import com.gigaxfer.core.nfs.BoundedNfsExecutor;
+import com.example.filesync.core.digest.Sha256;
+import com.example.filesync.core.identity.FileIdentity;
+import com.example.filesync.core.layout.PathLayout;
+import com.example.filesync.core.manifest.Manifest;
+import com.example.filesync.core.manifest.ManifestCodec;
+import com.example.filesync.core.nfs.BoundedNfsExecutor;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -1564,7 +1564,7 @@ class FinalizeHappyPathTest {
 
 - [ ] **Step 2: 跑測試確認失敗**
 
-Run: `mvn -q -pl gigaxfer-core test -Dtest=FinalizeHappyPathTest`
+Run: `mvn -q -pl file-sync-core test -Dtest=FinalizeHappyPathTest`
 Expected: FAIL，`UnsupportedOperationException: Task 8`。
 
 - [ ] **Step 3: 實作 finalize**
@@ -1683,7 +1683,7 @@ Expected: FAIL，`UnsupportedOperationException: Task 8`。
         bestEffort("unlink-manifest-tmp", () -> Files.deleteIfExists(store.layout.manifestTmpPath(id, uuid)));
     }
 
-    private void bestEffort(String op, com.gigaxfer.core.nfs.NfsExecutor.IoRunnable r) {
+    private void bestEffort(String op, com.example.filesync.core.nfs.NfsExecutor.IoRunnable r) {
         try {
             store.nfs.run(op, r);
         } catch (Exception ignored) {
@@ -1696,18 +1696,18 @@ Expected: FAIL，`UnsupportedOperationException: Task 8`。
 
 - [ ] **Step 4: 跑測試確認通過**
 
-Run: `mvn -q -pl gigaxfer-core test -Dtest=FinalizeHappyPathTest`
+Run: `mvn -q -pl file-sync-core test -Dtest=FinalizeHappyPathTest`
 Expected: 4 tests passed。
 
 - [ ] **Step 5: 跑全部**
 
-Run: `mvn -q -pl gigaxfer-core test`
+Run: `mvn -q -pl file-sync-core test`
 Expected: all passed。
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add gigaxfer-core/src/main/java/com/gigaxfer/core/store/WriteHandle.java gigaxfer-core/src/test/java/com/gigaxfer/core/store/FinalizeHappyPathTest.java
+git add file-sync-core/src/main/java/com/example/filesync/core/store/WriteHandle.java file-sync-core/src/test/java/com/example/filesync/core/store/FinalizeHappyPathTest.java
 git commit -m "feat(core): Finalize protocol — tmp+link manifest, cross-dir link publish, temp cleanup"
 ```
 
@@ -1716,8 +1716,8 @@ git commit -m "feat(core): Finalize protocol — tmp+link manifest, cross-dir li
 ### Task 9: Finalize 的故障窗口與衝突（F1b、F2、F2b、F3、F5、F5b）
 
 **Files:**
-- Test helper: `gigaxfer-core/src/test/java/com/gigaxfer/core/store/FaultInjectingNfs.java`
-- Test: `gigaxfer-core/src/test/java/com/gigaxfer/core/store/FinalizeRecoveryTest.java`
+- Test helper: `file-sync-core/src/test/java/com/example/filesync/core/store/FaultInjectingNfs.java`
+- Test: `file-sync-core/src/test/java/com/example/filesync/core/store/FinalizeRecoveryTest.java`
 
 **Interfaces:**
 - Consumes: `NfsExecutor`（裝飾）、Task 8 的 `finalize()`。
@@ -1726,11 +1726,11 @@ git commit -m "feat(core): Finalize protocol — tmp+link manifest, cross-dir li
 - [ ] **Step 1: 寫故障注入裝飾器**
 
 ```java
-package com.gigaxfer.core.store;
+package com.example.filesync.core.store;
 
-import com.gigaxfer.core.nfs.NfsBusyException;
-import com.gigaxfer.core.nfs.NfsExecutor;
-import com.gigaxfer.core.nfs.NfsTimeoutException;
+import com.example.filesync.core.nfs.NfsBusyException;
+import com.example.filesync.core.nfs.NfsExecutor;
+import com.example.filesync.core.nfs.NfsTimeoutException;
 
 import java.io.IOException;
 import java.util.Map;
@@ -1772,11 +1772,11 @@ final class FaultInjectingNfs implements NfsExecutor {
 - [ ] **Step 2: 寫失敗測試**
 
 ```java
-package com.gigaxfer.core.store;
+package com.example.filesync.core.store;
 
-import com.gigaxfer.core.identity.FileIdentity;
-import com.gigaxfer.core.layout.PathLayout;
-import com.gigaxfer.core.nfs.BoundedNfsExecutor;
+import com.example.filesync.core.identity.FileIdentity;
+import com.example.filesync.core.layout.PathLayout;
+import com.example.filesync.core.nfs.BoundedNfsExecutor;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -1950,20 +1950,20 @@ class FinalizeRecoveryTest {
         Files.write(tmp, "{\"schema_version\":1,\"sou".getBytes(StandardCharsets.UTF_8)); // 半截
         assertThat(h.finalize()).isInstanceOf(FinalizeResult.Success.class);
         assertThat(store.codec.decode(Files.readAllBytes(layout.manifestPath(id))).digest())
-            .isEqualTo(com.gigaxfer.core.digest.Sha256.ofBytes(content));
+            .isEqualTo(com.example.filesync.core.digest.Sha256.ofBytes(content));
     }
 }
 ```
 
 - [ ] **Step 3: 跑測試**
 
-Run: `mvn -q -pl gigaxfer-core test -Dtest=FinalizeRecoveryTest`
+Run: `mvn -q -pl file-sync-core test -Dtest=FinalizeRecoveryTest`
 Expected: 全部通過。若任一失敗，缺陷在 `WriteHandle.finalize()`，依失敗訊息修正後重跑；不得修改測試的預期。
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add gigaxfer-core/src/test/java/com/gigaxfer/core/store/FaultInjectingNfs.java gigaxfer-core/src/test/java/com/gigaxfer/core/store/FinalizeRecoveryTest.java gigaxfer-core/src/main/java/com/gigaxfer/core/store/WriteHandle.java
+git add file-sync-core/src/test/java/com/example/filesync/core/store/FaultInjectingNfs.java file-sync-core/src/test/java/com/example/filesync/core/store/FinalizeRecoveryTest.java file-sync-core/src/main/java/com/example/filesync/core/store/WriteHandle.java
 git commit -m "test(core): Finalize recovery windows F1b/F2/F2b/F3/F4/F5/F5b and scenario 11"
 ```
 
@@ -1972,7 +1972,7 @@ git commit -m "test(core): Finalize recovery windows F1b/F2/F2b/F3/F4/F5/F5b and
 ### Task 10: 執行器滿與 timeout 下的行為（F18 library 側）
 
 **Files:**
-- Test: `gigaxfer-core/src/test/java/com/gigaxfer/core/store/FinalizeUnderPressureTest.java`
+- Test: `file-sync-core/src/test/java/com/example/filesync/core/store/FinalizeUnderPressureTest.java`
 
 **Interfaces:**
 - Consumes: `BoundedNfsExecutor`、`LocalStore`、`WriteHandle`。
@@ -1980,10 +1980,10 @@ git commit -m "test(core): Finalize recovery windows F1b/F2/F2b/F3/F4/F5/F5b and
 - [ ] **Step 1: 寫測試**
 
 ```java
-package com.gigaxfer.core.store;
+package com.example.filesync.core.store;
 
-import com.gigaxfer.core.layout.PathLayout;
-import com.gigaxfer.core.nfs.BoundedNfsExecutor;
+import com.example.filesync.core.layout.PathLayout;
+import com.example.filesync.core.nfs.BoundedNfsExecutor;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -2063,16 +2063,16 @@ class FinalizeUnderPressureTest {
 
 - [ ] **Step 2: 跑測試**
 
-Run: `mvn -q -pl gigaxfer-core test -Dtest=FinalizeUnderPressureTest`
+Run: `mvn -q -pl file-sync-core test -Dtest=FinalizeUnderPressureTest`
 Expected: 3 tests passed。
 
 - [ ] **Step 3: 跑全部並 commit**
 
-Run: `mvn -q -pl gigaxfer-core test`
+Run: `mvn -q -pl file-sync-core test`
 Expected: all passed。
 
 ```bash
-git add gigaxfer-core/src/test/java/com/gigaxfer/core/store/FinalizeUnderPressureTest.java
+git add file-sync-core/src/test/java/com/example/filesync/core/store/FinalizeUnderPressureTest.java
 git commit -m "test(core): pool exhaustion maps to UNAVAILABLE / IOException / PENDING_CONFIRMATION"
 ```
 
@@ -2081,14 +2081,14 @@ git commit -m "test(core): pool exhaustion maps to UNAVAILABLE / IOException / P
 ### Task 11: Application 整合契約文件
 
 **Files:**
-- Create: `gigaxfer-core/README.md`
+- Create: `file-sync-core/README.md`
 
 - [ ] **Step 1: 寫 README**
 
 ```markdown
-# gigaxfer-core
+# file-sync-core
 
-Application 端 Storage Access contract 的核心（無 Spring、無 DB）。Spring Boot starter 見 `gigaxfer-library`（P10）。
+Application 端 Storage Access contract 的核心（無 Spring、無 DB）。Spring Boot starter 見 `file-sync-library`（P10）。
 
 ## 契約（SR-01、D8、D23、§5）
 
@@ -2125,13 +2125,13 @@ switch (r) {
 
 ## 測試
 
-`mvn -q -pl gigaxfer-core test`。故障窗口對照 `docs/design/system-design.md` §6：F1b、F2、F2b、F3、F4、F5、F5b、F18（library 側）。
+`mvn -q -pl file-sync-core test`。故障窗口對照 `docs/design/system-design.md` §6：F1b、F2、F2b、F3、F4、F5、F5b、F18（library 側）。
 ```
 
 - [ ] **Step 2: Commit**
 
 ```bash
-git add gigaxfer-core/README.md
+git add file-sync-core/README.md
 git commit -m "docs(core): Application integration contract"
 ```
 
