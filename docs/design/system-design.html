@@ -1,0 +1,858 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cross-Node Sync System Design</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+<style>
+:root{
+  --bg:#F3F5F7; --surface:#FFFFFF; --ink:#18222B; --muted:#5B6874; --line:#D3DAE1; --line-soft:#E6EBEF;
+  --src:#0E7C7B; --src-soft:#DDF1EF; --tgt:#B5701B; --tgt-soft:#F8EBD6;
+  --ok:#1F7A3F; --warn:#B5701B; --bad:#B3261E; --bad-soft:#F9E3E1;
+  --code-bg:#EDF1F4; --sel:#FFF4D6;
+  --sans:"Noto Sans TC","IBM Plex Sans","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --latin:"IBM Plex Sans","Noto Sans TC","PingFang TC",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0E1317; --surface:#151C22; --ink:#E4EAF0; --muted:#97A3AE; --line:#2B3640; --line-soft:#212A33;
+    --src:#3FC1B4; --src-soft:#12312F; --tgt:#E9A93C; --tgt-soft:#3A2A10;
+    --ok:#4CC27A; --warn:#E9A93C; --bad:#F0716A; --bad-soft:#3D1B19;
+    --code-bg:#1C252D; --sel:#3A2F12; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0E1317; --surface:#151C22; --ink:#E4EAF0; --muted:#97A3AE; --line:#2B3640; --line-soft:#212A33;
+  --src:#3FC1B4; --src-soft:#12312F; --tgt:#E9A93C; --tgt-soft:#3A2A10;
+  --ok:#4CC27A; --warn:#E9A93C; --bad:#F0716A; --bad-soft:#3D1B19;
+  --code-bg:#1C252D; --sel:#3A2F12; color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.75 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:var(--src)}
+code{font-family:var(--mono);font-size:.88em;background:var(--code-bg);padding:.1em .35em;border-radius:3px;overflow-wrap:anywhere}
+pre{font-family:var(--mono);font-size:12.5px;line-height:1.6;background:var(--code-bg);padding:14px 16px;border-radius:6px;overflow-x:auto}
+h1,h2,h3{font-family:var(--latin);text-wrap:balance;line-height:1.3;margin:0}
+h1{font-size:30px;font-weight:600;letter-spacing:-.01em}
+h2{font-size:22px;font-weight:600;margin-block:56px 12px;padding-top:12px;border-top:2px solid var(--ink)}
+h2 .num,h3 .num{font-family:var(--mono);font-weight:500;color:var(--muted);margin-right:.5em;font-size:.85em}
+h3{font-size:17px;font-weight:600;margin-block:32px 10px}
+p{margin:0 0 12px}
+.prose{max-width:46em}
+.eyebrow{font-family:var(--latin);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:500}
+.meta{color:var(--muted);font-size:13.5px;margin-top:8px}
+.page{max-width:1300px;margin:0 auto;padding-inline:24px;padding-block:32px 96px;display:grid;grid-template-columns:230px minmax(0,1fr);gap:48px}
+aside{position:sticky;top:env(safe-area-inset-top,0px);align-self:start;max-height:calc(100vh - 24px);overflow:auto;padding-top:8px}
+.toc summary{font-family:var(--latin);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);cursor:pointer;font-weight:500;list-style:none;padding-block:6px}
+.toc summary::-webkit-details-marker{display:none}
+.toc ol{list-style:none;margin:6px 0 0;padding:0;border-left:1px solid var(--line)}
+.toc li a{display:block;padding:4px 12px;color:var(--muted);text-decoration:none;font-size:13px;line-height:1.45;border-left:2px solid transparent;margin-left:-1px}
+.toc li a:hover{color:var(--ink)}
+.toc li a.on{color:var(--ink);border-left-color:var(--src);font-weight:500}
+.toc li a .n{font-family:var(--mono);font-size:11px;display:inline-block;width:2.2em;color:var(--muted)}
+main{min-width:0}
+header{padding-bottom:20px}
+.tbl{overflow-x:auto;margin-block:14px 20px;border:1px solid var(--line);border-radius:6px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:13.5px;line-height:1.55}
+th,td{padding:8px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line-soft)}
+th{font-family:var(--latin);font-weight:600;font-size:12.5px;background:var(--code-bg);white-space:nowrap;position:sticky;top:0}
+tr:last-child td{border-bottom:0}
+td:first-child{white-space:nowrap;font-weight:500}
+.tbl.wrap td:first-child{white-space:normal}
+tr[data-comp]{cursor:pointer}
+tr[data-comp]:hover,tr.on{background:var(--sel)}
+.ref{font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap}
+.steps{list-style:none;margin:0 0 16px;padding:0;counter-reset:s}
+.steps>li{position:relative;padding-left:2.4em;margin-bottom:10px;max-width:56em}
+.steps>li::before{counter-increment:s;content:counter(s);position:absolute;left:0;top:.2em;width:1.6em;height:1.6em;border-radius:50%;background:var(--ink);color:var(--bg);font:500 11px/1.6em var(--mono);text-align:center}
+.steps>li>ul{margin:4px 0 0;padding-left:1.2em;color:var(--ink)}
+.steps>li>ul>li{margin-bottom:3px}
+.callout{border-left:3px solid var(--src);background:var(--surface);padding:10px 16px;margin-block:14px 18px;max-width:56em;border-radius:0 6px 6px 0}
+.callout.warn{border-left-color:var(--warn)}
+.callout p:last-child{margin:0}
+.fig{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px;margin-block:16px 24px}
+.fig figure{margin:0}
+.fig svg{display:block;width:100%;height:auto;max-width:100%;font-family:var(--sans);color:var(--ink)}
+.fig figcaption{font-size:13px;color:var(--muted);margin-top:10px;max-width:60em}
+.fig .scroll{overflow-x:auto}
+.fig .scroll svg{min-width:640px}
+.badge{display:inline-block;font:500 11px/1.6 var(--mono);padding:0 .5em;border-radius:3px;background:var(--code-bg);color:var(--ink);vertical-align:middle}
+.badge.src{background:var(--src-soft);color:var(--src)}
+.badge.tgt{background:var(--tgt-soft);color:var(--tgt)}
+.badge.bad{background:var(--bad-soft);color:var(--bad)}
+kbd.fid{font:500 12px var(--mono);color:var(--src)}
+/* --- SVG shared --- */
+.box{fill:var(--surface);stroke:var(--line);stroke-width:1.2}
+.node{fill:none;stroke:var(--line);stroke-width:1.4;stroke-dasharray:6 4}
+.t{font-size:12px;fill:var(--ink)}
+.t.b{font-weight:600}
+.t.s{font-size:11px;fill:var(--muted)}
+.t.m{font-family:var(--mono);font-size:11px}
+.t.eye{font-family:var(--latin);font-size:10.5px;fill:var(--muted);letter-spacing:.06em;text-transform:uppercase}
+.t.lbl{font-size:11px;fill:var(--muted)}
+.t.lbl.src{fill:var(--src)} .t.lbl.tgt{fill:var(--tgt)}
+.edge{fill:none;stroke:var(--ink);stroke-width:1.6;marker-end:url(#ah);transition:opacity .25s}
+.edge.src{stroke:var(--src);marker-end:url(#ah-src)}
+.edge.tgt{stroke:var(--tgt);marker-end:url(#ah-tgt)}
+.edge.ctl{stroke:var(--muted);stroke-dasharray:3 4;marker-end:url(#ah-mut)}
+.edge.ret{stroke-dasharray:5 4}
+.edge.flow{stroke-dasharray:7 5;animation:dash 1.1s linear infinite}
+.edge.flow.ctl{stroke-dasharray:3 4;animation-duration:2.4s}
+@keyframes dash{to{stroke-dashoffset:-12}}
+.edge.dim{opacity:.15}
+#ah path{fill:var(--ink)} #ah-src path{fill:var(--src)} #ah-tgt path{fill:var(--tgt)} #ah-mut path{fill:var(--muted)}
+.comp{cursor:pointer;outline:none}
+.comp rect{transition:stroke .2s,fill .2s}
+.comp:hover rect,.comp:focus-visible rect{stroke:var(--src);stroke-width:1.8}
+.comp.on rect{stroke:var(--src);stroke-width:2.2;fill:var(--src-soft)}
+svg.sel .comp:not(.on){opacity:.45}
+.arch-info{margin-top:12px;padding:12px 16px;border-radius:6px;background:var(--code-bg);font-size:14px;min-height:3em}
+.arch-info p{margin:4px 0 0}
+.arch-info .ref{white-space:normal}
+/* stepper */
+.stepbar{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 10px}
+.stepbar button,.btn{font:500 12.5px var(--latin);padding:6px 12px;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:999px;cursor:pointer}
+.stepbar button:hover,.btn:hover{border-color:var(--src)}
+.stepbar button.on{background:var(--src);border-color:var(--src);color:#fff}
+.stepbar button:focus-visible,.btn:focus-visible,.comp:focus-visible{outline:2px solid var(--src);outline-offset:2px}
+.fz-cap{font-size:14px;margin-top:6px;max-width:60em}
+.fz-crash{font-size:13px;color:var(--bad);margin-top:4px;max-width:60em}
+.fz-crash.ok{color:var(--ok)}
+.ghost{opacity:.35}
+.ghost text{text-decoration:line-through}
+.ready rect{fill:var(--src-soft);stroke:var(--src)}
+.ready text{fill:var(--src)}
+/* sequence */
+.seq .msg{animation:seq-in .45s ease both;animation-delay:calc(var(--i) * .5s)}
+.seq.replay .msg{animation:none}
+@keyframes seq-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.lane{stroke:var(--line);stroke-dasharray:4 4;stroke-width:1.2}
+.lane-h rect{fill:var(--code-bg);stroke:var(--line)}
+.lane-h.src rect{fill:var(--src-soft);stroke:var(--src)} .lane-h.tgt rect{fill:var(--tgt-soft);stroke:var(--tgt)}
+.state rect{fill:var(--surface);stroke:var(--ink);stroke-width:1.6}
+.state.done rect{fill:var(--src-soft);stroke:var(--src)} .state.q rect{fill:var(--bad-soft);stroke:var(--bad)}
+.state text{font-family:var(--mono);font-size:13px;font-weight:500}
+@media (prefers-reduced-motion:reduce){.edge.flow{animation:none}.seq .msg{animation:none}html{scroll-behavior:auto}}
+@media (max-width:900px){
+  .page{grid-template-columns:1fr;gap:20px;padding-inline:16px}
+  aside{position:static;max-height:none}
+  .toc ol{border-left:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
+  h1{font-size:24px}
+  .fig{padding:10px}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-src" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-tgt" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ah-mut" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z"/></marker>
+  </defs>
+</svg>
+<div class="page">
+<aside>
+  <details class="toc" id="toc" open>
+    <summary>目錄</summary>
+    <ol>
+      <li><a href="#s0"><span class="n">0</span>設計目標與量測</a></li>
+      <li><a href="#s1"><span class="n">1</span>架構元件</a></li>
+      <li><a href="#s2"><span class="n">2</span>Runtime 架構</a></li>
+      <li><a href="#s3"><span class="n">3</span>持久化</a></li>
+      <li><a href="#s4"><span class="n">4</span>Control Plane 與設定</a></li>
+      <li><a href="#s5"><span class="n">5</span>Application 整合契約</a></li>
+      <li><a href="#s6"><span class="n">6</span>故障窗口表</a></li>
+      <li><a href="#s7"><span class="n">7</span>Recovery 與容量算術</a></li>
+      <li><a href="#s8"><span class="n">8</span>Ops</a></li>
+      <li><a href="#s9"><span class="n">9</span>Observability</a></li>
+      <li><a href="#s10"><span class="n">10</span>SLO 建議值</a></li>
+      <li><a href="#s11"><span class="n">11</span>Requirement → Design → Test</a></li>
+      <li><a href="#s12"><span class="n">12</span>已知未決</a></li>
+    </ol>
+  </details>
+</aside>
+<main>
+<header>
+  <div class="eyebrow">System Design · Version 0.1 draft · 2026-09-22</div>
+  <h1 style="margin-top:8px">Cross-Node File Synchronization Framework</h1>
+  <p class="meta prose">依據：spec v0.3、CONTEXT.md、ADR-0001～0003、docs/design/design-decisions.md（D1～D56 及修訂）。本文只展開決策，不新增決策；每段標註來源 D 編號。</p>
+</header>
+
+<h2 id="s0"><span class="num">0</span>設計目標與量測</h2>
+<p class="prose">全文的尺。每條目標對應一個可量的指標與一組驗收測試；後面每一章都要能回答「這對哪條目標、用哪個數字證明」。</p>
+<div class="tbl wrap"><table>
+<thead><tr><th>目標</th><th>一句話</th><th>怎麼量</th><th>通過條件</th><th>驗收</th></tr></thead>
+<tbody>
+<tr><td><kbd class="fid">DG-01</kbd> Node independence</td><td>任一 Node 停機，其他 Node 的本地交易不受影響</td><td><code>local_write_availability{node}</code>、<code>local_write_latency{node}</code> 在故障 Node 之外</td><td>與正常時段相同 SLO（§18 TBD）</td><td>T02, T03, T12, AC-NODE-01～02</td></tr>
+<tr><td><kbd class="fid">DG-02</kbd> Local-first</td><td>Finalize 不等遠端、不等 CP</td><td>同上，加 sync service 停機期間的量測</td><td>Finalize 只碰本地 NAS，SLO 不變</td><td>T02, T14, T23</td></tr>
+<tr><td><kbd class="fid">DG-03</kbd> Eventual consistency</td><td>故障解除後自動補齊，期限內完成</td><td><code>oldest_unfinished_age</code>、<code>net_backlog_drain_rate</code>、<code>recovery_duration</code></td><td>24 h 停機後 24 h 內截止點集合全部 COMPLETED；不需人工 re-copy</td><td>T05, T16, T24, §20</td></tr>
+<tr><td><kbd class="fid">DG-04</kbd> No silent loss</td><td>缺、壞、卡、衝突都在時限內被發現，未驗證者不標完成</td><td><code>reconciliation_coverage</code>、<code>unknown_count</code>、<code>integrity_failure_count</code>、<code>identity_conflict_count</code>、<code>unrecoverable_count</code>、Deep check 覆蓋週期</td><td>注入的缺漏在一個 Shallow 週期（6 h）內、損壞在一個 Deep 週期（量測後定）內被發現；錯誤完成數 = 0；unknown 明示不假報</td><td>T10, T11, T20, T27, T30</td></tr>
+<tr><td><kbd class="fid">DG-05</kbd> Operational resilience</td><td>重啟、升級、分割、暫時 outage、重複 trigger、中斷傳輸都自動恢復</td><td><code>process_start_time</code> + <code>up</code>、accepted obligation 遺失數、<code>activation_failure_count</code></td><td>已接受義務遺失數 = 0；重啟 30 s 內服務；LKG 保證完整設定</td><td>T06～T09, T13, T26, T32</td></tr>
+</tbody></table></div>
+<p class="prose">指標定義與門檻見 docs/design/monitoring.md；數值目標見第 10 章。</p>
+
+<h2 id="s1"><span class="num">1</span>架構元件</h2>
+<p class="prose">一套部署內 ≤10 個 Node（Phase），彼此 full mesh。每個 Node 自成一個 Data Plane，跨 Node 共用的只有 git + CD（設定）、AD/DNS 與監控基礎設施，三者都不是資料流的即時依賴。</p>
+<div class="fig"><figure>
+<div class="scroll">
+<svg id="arch" viewBox="0 0 980 580" role="img" aria-label="兩個 Node 的元件與資料流：Application 經 library 以 NFS 寫本地 NAS；sync service 掃描 NAS、把義務記在 Oracle；其他 Node 的 sync service 以 HTTP 拉取檔案並回報；git+CD 下發設定、Prometheus 抓取指標，兩者都不在資料流上">
+  <!-- shared infra -->
+  <g class="comp" data-id="git" tabindex="0" role="button" aria-label="git 與 CD">
+    <rect class="box" x="40" y="20" width="330" height="56" rx="6"/>
+    <text class="t b" x="56" y="42">git repo · <tspan class="t m">configs/v&lt;N&gt;.json</tspan></text>
+    <text class="t s" x="56" y="62">PR merge = 發布；CD 寫入每台 sync 主機本機磁碟；沒有 CP process</text>
+  </g>
+  <g class="comp" data-id="prom" tabindex="0" role="button" aria-label="Prometheus、Grafana、Alertmanager">
+    <rect class="box" x="620" y="20" width="320" height="56" rx="6"/>
+    <text class="t b" x="636" y="42">Prometheus · Grafana · Alertmanager</text>
+    <text class="t s" x="636" y="62">每套部署一組；呈現與告警，不在資料流上</text>
+  </g>
+  <!-- Node A -->
+  <rect class="node" x="40" y="110" width="520" height="420" rx="10"/>
+  <text class="t b" x="56" y="134">Node A</text>
+  <text class="t s" x="112" y="134">每個 Node 自成一個 Data Plane：自己的 NAS、DB、process</text>
+  <g class="comp" data-id="app" tabindex="0" role="button" aria-label="Application 與 library">
+    <rect class="box" x="60" y="160" width="180" height="100" rx="6"/>
+    <text class="t eye" x="72" y="180">App 主機 ×N</text>
+    <text class="t b" x="72" y="204">Application</text>
+    <text class="t" x="72" y="224">+ library</text>
+    <text class="t s" x="72" y="244">Spring Boot starter，同 process</text>
+  </g>
+  <g class="comp" data-id="sync" tabindex="0" role="button" aria-label="sync service">
+    <rect class="box" x="330" y="160" width="210" height="100" rx="6"/>
+    <text class="t eye" x="342" y="180">sync 主機 ×1 · 另一台冷備</text>
+    <text class="t b" x="342" y="204">sync service</text>
+    <text class="t s" x="342" y="224">scan · serve · pull · reconcile</text>
+    <text class="t s" x="342" y="244">cleanup · ops · /policy · /locate</text>
+  </g>
+  <g class="comp" data-id="nas" tabindex="0" role="button" aria-label="Local Storage NAS">
+    <rect class="box" x="60" y="400" width="320" height="100" rx="6"/>
+    <text class="t b" x="72" y="422">Local Storage（NAS，Node 自有）</text>
+    <text class="t m" x="72" y="444">&lt;src&gt;/&lt;ns&gt;/&lt;bucket&gt;/&lt;key&gt;.manifest</text>
+    <text class="t m" x="72" y="462">&lt;src&gt;/&lt;ns&gt;/HH/&lt;key&gt;</text>
+    <text class="t s" x="72" y="484">NFSv3 hard mount · 唯一真相：&lt;key&gt; 存在 = Ready</text>
+  </g>
+  <g class="comp" data-id="db" tabindex="0" role="button" aria-label="Oracle sync schema">
+    <rect class="box" x="420" y="400" width="120" height="100" rx="6"/>
+    <text class="t b" x="432" y="422">Oracle</text>
+    <text class="t s" x="432" y="444">sync 自有 schema</text>
+    <text class="t s" x="432" y="462">義務 · received</text>
+    <text class="t s" x="432" y="480">inspection · audit</text>
+  </g>
+  <!-- Node B -->
+  <rect class="node" x="700" y="110" width="240" height="420" rx="10"/>
+  <text class="t b" x="716" y="134">Node B</text>
+  <text class="t s" x="772" y="134">其餘 Node 相同（≤10，full mesh）</text>
+  <g class="comp" data-id="sync" tabindex="0" role="button" aria-label="Node B 的 sync service">
+    <rect class="box" x="720" y="160" width="200" height="100" rx="6"/>
+    <text class="t eye" x="732" y="180">sync 主機 ×1</text>
+    <text class="t b" x="732" y="204">sync service</text>
+    <text class="t s" x="732" y="224">同一 process 兩個角色：</text>
+    <text class="t s" x="732" y="242">對 A 的資料是 Target，對自己是 Source</text>
+  </g>
+  <g class="comp" data-id="nas" tabindex="0" role="button" aria-label="Node B 的 NAS">
+    <rect class="box" x="720" y="400" width="200" height="100" rx="6"/>
+    <text class="t b" x="732" y="422">NAS B（Node 自有）</text>
+    <text class="t m" x="732" y="444">&lt;src&gt;/&lt;ns&gt;/HH/&lt;key&gt;</text>
+    <text class="t s" x="732" y="466">Target 只寫自己的 NAS</text>
+    <text class="t s" x="732" y="484">不 mount 遠端 NAS（ADR-0002）</text>
+  </g>
+  <!-- edges -->
+  <path class="edge flow src" d="M240 205 H330" data-ends="app sync"/>
+  <text class="t lbl src" x="285" y="197" text-anchor="middle">GET /policy</text>
+  <text class="t lbl src" x="285" y="222" text-anchor="middle">GET /locate</text>
+  <path class="edge flow src" d="M150 260 V400" data-ends="app nas"/>
+  <text class="t lbl src" x="158" y="320">NFS (hard)</text>
+  <text class="t lbl src" x="158" y="336">write · fsync · link 發布</text>
+  <path class="edge flow src" d="M360 260 V400" data-ends="sync nas"/>
+  <text class="t lbl src" x="368" y="350">NFS 掃描 · read</text>
+  <path class="edge flow" d="M500 260 V400" data-ends="sync db"/>
+  <text class="t lbl" x="508" y="330">JDBC</text>
+  <path class="edge flow ctl" d="M205 76 V95 H435 V160" data-ends="git sync"/>
+  <text class="t lbl" x="320" y="90" text-anchor="middle">CD 下發 candidate.json · restart</text>
+  <path class="edge flow ctl" d="M515 160 V95 H700 V76" data-ends="sync prom"/>
+  <text class="t lbl" x="607" y="90" text-anchor="middle">scrape /actuator/prometheus</text>
+  <path class="edge flow ctl" d="M840 160 V76" data-ends="sync prom"/>
+  <text class="t lbl" x="848" y="120">scrape</text>
+  <path class="edge flow tgt" d="M700 180 H540" data-ends="sync"/>
+  <text class="t lbl tgt" x="620" y="173" text-anchor="middle">GET /pending · GET /file</text>
+  <path class="edge flow src" d="M540 210 H700" data-ends="sync"/>
+  <text class="t lbl src" x="620" y="203" text-anchor="middle">file bytes ≤50 MB/s</text>
+  <path class="edge flow tgt" d="M700 240 H540" data-ends="sync"/>
+  <text class="t lbl tgt" x="620" y="233" text-anchor="middle">POST /report</text>
+  <text class="t s" x="620" y="262" text-anchor="middle">shared token + HTTPS（D14）</text>
+  <path class="edge flow tgt" d="M820 260 V400" data-ends="sync nas"/>
+  <text class="t lbl tgt" x="828" y="322">.writing → 驗 digest</text>
+  <text class="t lbl tgt" x="828" y="338">→ link 發布 &lt;key&gt;</text>
+  <!-- legend -->
+  <path class="edge src" d="M60 556 H96"/><text class="t s" x="104" y="560">資料流，Source 角色（只碰本地 NAS）</text>
+  <path class="edge tgt" d="M340 556 H376"/><text class="t s" x="384" y="560">Target 拉取（跨 Node，HTTP pull）</text>
+  <path class="edge ctl" d="M620 556 H656"/><text class="t s" x="664" y="560">設定 / 監控（不是資料流的即時依賴）</text>
+</svg>
+</div>
+<div class="arch-info" id="arch-info">點選圖中元件，查看職責與決策來源。線上的流動方向即資料方向：Source 端只碰本地 NAS，跨 Node 只有 Target 主動拉取。</div>
+<figcaption>Node A 與 Node B 的元件關係。每個 Node 同時是自己資料的 Source 與他人資料的 Target；sync service 是同一個 process 扮演兩個角色。灰色虛線（設定下發、指標抓取）不在資料流上，斷掉不影響 Finalize 與拉取。</figcaption>
+</figure></div>
+<div class="tbl wrap"><table id="comp-table">
+<thead><tr><th>元件</th><th>做什麼</th><th>決策</th></tr></thead>
+<tbody>
+<tr data-comp="app"><td><strong>library</strong>（Spring Boot starter，跑在 Application process 內）</td><td>提供 write / Finalize / Discard / exists / read 契約；streaming 算 digest；寫 manifest 與 link 發布；向本 Node sync service 取 Policy 與 <code>/locate</code>；statfs 容量檢查；曝 Local Transaction 指標</td><td class="ref">D3, D4, D18, D21, D23, D15 修</td></tr>
+<tr data-comp="sync"><td><strong>sync service</strong>（每 Node 一台主機、一個 process，另一台冷備）</td><td>掃描 NAS 發現 Source Ready、建立與持有義務；對其他 Node 提供 <code>/pending</code> <code>/file</code> <code>/report</code> <code>/received</code>；作為 Target 向各 Source 拉取、驗證、發布；Target 端 Shallow / Deep 自查；清道夫；ops API、<code>/policy</code> 與 <code>/locate</code>；config 啟用。Java + Spring Boot（D38）</td><td class="ref">D5, D10, D12, D16, D17, D19, D20, D35, D38</td></tr>
+<tr data-comp="nas"><td><strong>Local Storage</strong>（NAS，NFSv3 hard mount）</td><td>唯一真相：<code>&lt;key&gt;</code> 存在 = Ready；manifest 為 Source Ready 權威紀錄</td><td class="ref">D1, D2, D3b</td></tr>
+<tr data-comp="db"><td><strong>Oracle</strong>（Node-local，sync 自有 schema）</td><td>義務進度、received 索引、inspection、audit、liveness；缺列可由 NAS 全掃補建，完成證據由對帳 ② 以條件更新匯入 Target <code>/received</code> 歷史證據；rebuild 只補不刪</td><td class="ref">D7, D9, D24, D29, D29 修 3</td></tr>
+<tr data-comp="git"><td><strong>git + CD</strong></td><td>設定真相與下發；沒有 CP process</td><td class="ref">D17, ADR-0003</td></tr>
+<tr data-comp="prom"><td><strong>Prometheus + Grafana + Alertmanager</strong></td><td>呈現與告警；驗收與其不可用時以 CLI 扇出 <code>/status</code> 為準</td><td class="ref">D27, D20 修</td></tr>
+<tr><td><strong>CLI</strong></td><td>包 ops API；扇出各 Node <code>/status</code> 為全域視圖備援</td><td class="ref">D20</td></tr>
+</tbody></table></div>
+
+<h2 id="s2"><span class="num">2</span>Runtime 架構</h2>
+<h3 id="s2-1"><span class="num">2.1</span>真相層級</h3>
+<div class="fig"><figure>
+<svg viewBox="0 0 760 232" role="img" aria-label="四層真相由上而下：NAS 的 key 與 manifest、Policy、Oracle sync schema、JVM 記憶體；任一層只能由上一層重建，永不反向">
+  <text class="t eye" x="76" y="12">層</text><text class="t eye" x="290" y="12">內容</text><text class="t eye" x="548" y="12">遺失後</text>
+  <path class="edge" d="M40 28 V206"/>
+  <text class="t s" x="24" y="120" text-anchor="middle" transform="rotate(-90 24 120)">只能由上一層重建 · 永不反向</text>
+  <g class="ready"><rect x="60" y="20" width="660" height="42" rx="5" class="box"/>
+    <text class="t b" x="76" y="46">NAS &lt;key&gt; + .manifest</text><text class="t" x="290" y="46">Source Ready 集合、Integrity baseline</text><text class="t s" x="548" y="46">資料損失，不在 v1 保證內</text></g>
+  <g><rect x="60" y="70" width="660" height="42" rx="5" class="box"/>
+    <text class="t b" x="76" y="96">Policy（active.json）</text><text class="t" x="290" y="96">應有集合 = manifest × Policy</text><text class="t s" x="548" y="96">由 lkg 或 git 重取</text></g>
+  <g><rect x="60" y="120" width="660" height="42" rx="5" class="box"/>
+    <text class="t b" x="76" y="146">Oracle sync schema</text><text class="t" x="290" y="146">義務進度、received、inspection</text><text class="t s" x="548" y="146">D29 重建（只補不刪）</text></g>
+  <g><rect x="60" y="170" width="660" height="42" rx="5" class="box"/>
+    <text class="t b" x="76" y="196">JVM 記憶體</text><text class="t" x="290" y="196">已知 key 集合、Target in-flight set、active config</text><text class="t s" x="548" y="196">重啟重載</text></g>
+</svg>
+<figcaption>四層真相。任何一層只能由上一層重建，永不反向。Application 自己的「檔案已 Ready」記帳不是 Framework 真相（D7）。</figcaption>
+</figure></div>
+
+<h3 id="s2-2"><span class="num">2.2</span>資料流 A：寫入與 Finalize（Source 端，library）</h3>
+<p class="prose">按步驟點選，看 NAS 上的檔案如何從暫存變成 Source Ready，以及每一步之後 crash 對應哪個故障窗口（第 6 章）。</p>
+<div class="fig"><figure>
+<div class="stepbar" id="fz-bar" role="tablist" aria-label="Finalize 步驟">
+  <button type="button" data-i="0" class="on">beginWrite · write</button>
+  <button type="button" data-i="1">① fsync</button>
+  <button type="button" data-i="2">② 寫 manifest tmp</button>
+  <button type="button" data-i="3">② link → manifest</button>
+  <button type="button" data-i="4">③ link → &lt;key&gt;</button>
+  <button type="button" data-i="5">④ 清理 → SUCCESS</button>
+</div>
+<div class="scroll">
+<svg id="fz" viewBox="0 0 900 340" role="img" aria-label="Finalize 四步在 NAS 上留下的檔案：暫存 .writing、manifest tmp 與 manifest、最後 link 出正式 key">
+  <rect class="box" x="20" y="24" width="250" height="90" rx="6"/>
+  <text class="t eye" x="32" y="44">library · Application process</text>
+  <text class="t b" x="32" y="66">Finalize 序列</text>
+  <text class="t m" x="32" y="88" id="fz-op1"></text>
+  <text class="t m" x="32" y="104" id="fz-op2"></text>
+  <path class="edge flow src" d="M270 70 H340"/>
+  <text class="t lbl src" x="305" y="62" text-anchor="middle">NFS</text>
+  <rect class="box" x="340" y="24" width="540" height="300" rx="6"/>
+  <text class="t eye" x="352" y="44">NAS · &lt;src&gt;/&lt;ns&gt;/</text>
+  <text class="t m b" x="352" y="72">writing/HH/ <tspan class="t s">（當下小時目錄，只放暫存，不是正式位置）</tspan></text>
+  <g id="f-writing" data-s="0 1 2 3 4"><rect class="box" x="372" y="84" width="300" height="24" rx="4"/><text class="t m" x="382" y="100">&lt;key&gt;.&lt;uuid&gt;.writing <tspan class="t s">DigestOutputStream</tspan></text></g>
+  <g id="f-writing-gone" data-s="5" class="ghost" hidden><rect class="box" x="372" y="84" width="300" height="24" rx="4"/><text class="t m" x="382" y="100">&lt;key&gt;.&lt;uuid&gt;.writing</text><text class="t s" x="640" y="100" text-anchor="end">unlinked</text></g>
+  <text class="t m b" x="352" y="140">&lt;bucket&gt;/ <tspan class="t s">（hash(key) 前 3 hex，與時間無關）</tspan></text>
+  <g id="f-tmp" data-s="2" hidden><rect class="box" x="372" y="152" width="300" height="24" rx="4"/><text class="t m" x="382" y="168">&lt;key&gt;.manifest.&lt;uuid&gt;.tmp <tspan class="t s">+ fsync</tspan></text></g>
+  <g id="f-tmp-gone" data-s="3" class="ghost" hidden><rect class="box" x="372" y="152" width="300" height="24" rx="4"/><text class="t m" x="382" y="168">&lt;key&gt;.manifest.&lt;uuid&gt;.tmp</text><text class="t s" x="640" y="168" text-anchor="end">unlinked</text></g>
+  <g id="f-tmp-link" data-s="3" hidden><text class="t lbl src" x="690" y="164">link(tmp → manifest)</text><text class="t lbl src" x="690" y="180">原子宣告 · EEXIST 走四項比對</text></g>
+  <g id="f-manifest" data-s="3 4 5" hidden><rect class="box" x="372" y="184" width="300" height="24" rx="4"/><text class="t m" x="382" y="200">&lt;key&gt;.manifest <tspan class="t s">永不刪</tspan></text></g>
+  <text class="t m b" x="352" y="258">HH′/ <tspan class="t s">（content_path = 宣告時刻的小時目錄，記在 manifest）</tspan></text>
+  <g id="f-key" data-s="4 5" class="ready" hidden><rect class="box" x="372" y="270" width="300" height="24" rx="4"/><text class="t m b" x="382" y="286">&lt;key&gt;</text><text class="t s" x="662" y="286" text-anchor="end">Source Ready ✓</text></g>
+  <g id="f-link" data-s="4 5" hidden><path class="edge flow src" d="M672 96 C 770 96, 770 282, 672 282"/><text class="t lbl src" x="782" y="182">link 跨目錄硬連結</text><text class="t lbl src" x="782" y="198">= commit point</text></g>
+</svg>
+</div>
+<p class="fz-cap" id="fz-cap"></p>
+<p class="fz-crash" id="fz-crash"></p>
+<figcaption>Finalize 的 commit point 是第 ③ 步的 link：正式 <code>&lt;key&gt;</code> 出現即 Source Ready。任一步 timeout → PENDING_CONFIRMATION；Application 重呼 finalize() 走同一序列（D3a, D8）。</figcaption>
+</figure></div>
+<div class="callout">
+<p>每個 NFS 操作交給有界執行器，槽位只在 syscall 真的回來才釋放，滿了立即拒絕（D51）。Application 拿到 SUCCESS 才 commit 業務交易（D8）。同一 identity 的正式位置由第一個宣告 manifest 的人決定，跨小時重跑仍撞 EEXIST（D48）。正式位置的小時目錄取宣告時刻，寫入橫跨多日再宣告仍落在搜尋窗內；遲到發布的邊界與預算見 D56 ④（D48 修）。</p>
+<p><strong>三句不變量（D46）</strong>：Source 掃描器不修改 NAS；Source 正式 <code>&lt;key&gt;</code> 只由 library 發布；清道夫僅依 Abandoned 規則清理暫存與未發布 metadata。</p>
+</div>
+<p class="prose"><strong>重試路徑的細節</strong>（②、③ 步）：</p>
+<ul class="prose">
+<li>manifest link 得 EEXIST → 讀既有 manifest（必為完整）：本次請求的 identity、class、size、digest 與之四項皆同 → 續行，content_path 以既有為準；任一不同 → FAILURE(CONFLICT) <span class="ref">D3, D3a, D53</span></li>
+<li>續行先 rediscovery：content_path/<code>&lt;key&gt;</code> 存在且 digest = manifest → SUCCESS，不看年齡；不存在且需再次嘗試發布 → manifest mtime 超過 N = 7 天 → FAILURE(DECLARATION_EXPIRED)，App 換 key；link 已送出結果未明 → PENDING_CONFIRMATION <span class="ref">D53 修, D51 修 2</span></li>
+<li>③ 的 link 得 EEXIST → 重讀 <code>&lt;key&gt;</code> 算 digest = manifest → 已完成（重試路徑的當下確認，D44）</li>
+<li>④ 的 unlink 失敗不影響結果，清道夫兜底；manifest 本身永不刪 <span class="ref">D35, D53</span></li>
+</ul>
+
+<h3 id="s2-3"><span class="num">2.3</span>資料流 B：發現與義務建立（Source 端，sync service）</h3>
+<div class="tbl wrap"><table>
+<thead><tr><th>節奏</th><th>做什麼</th><th>決策</th></tr></thead>
+<tbody>
+<tr><td>每 10 s<br><span class="ref">增量掃</span></td><td>readdir 當前 + 前 2 小時的 <code>/HH/</code> 內容目錄 → 與記憶體已知 key 集合比對，只有新 key 走 ingest。<br><strong>ingest（冪等）</strong>：由路徑推 identity → 讀 <code>&lt;bucket&gt;/&lt;key&gt;.manifest</code> → 路徑 == content_path 才算 Ready，否則計 anomaly → INSERT <code>file_identity</code> → 依 Policy (source, class) 展開 Required targets → INSERT <code>obligation</code> PENDING</td><td class="ref">D6, D26, D30, D36, D48, D53, D10</td></tr>
+<tr><td>每 6 h<br><span class="ref">全量對帳</span></td><td>掃整個保留期 30 天，逐小時內容目錄 readdir 對 DB 該小時集合，同一段 ingest，補漏並寫 inspection。<br>同時枚舉 manifest 桶（mtime 粗篩窗內）：manifest 有、內容無、DB 曾 Ready → 交 2.5 ①′ 判定明確不存在；DB 無紀錄 → 「未發布或發布後遺失」候選，計 unknown；DB 剛重建 → unknown。只有不在 DB 的 manifest 才讀內容；窗外 manifest 不枚舉，窗外未完成義務由 DB 列驅動檢查</td><td class="ref">D10, D19 ①, D50, D53, D56</td></tr>
+</tbody></table></div>
+<p class="prose">義務在 Source Ready 那一刻已成立（manifest 存在），掃描只是把它登記到 DB；掃描漏掉或 DB 遺失都不改變義務存在的事實（RR-02、RC-01）。掃描只讀：manifest + <code>&lt;key&gt;</code> = Ready 才登記；manifest + <code>.writing</code> 無 <code>&lt;key&gt;</code> 是 Writing，由 Application 重呼 finalize 補 link，超 TTL 由清道夫當 Abandoned，Abandoned 只忽略 <code>.writing</code>，其 <code>&lt;key&gt;</code> 之後出現即 ingest（D46、D53 修）。DB 列不按時間刪未完成義務，purge 以 identity 整組 COMPLETED 為條件（D56 ②、D35 修）。</p>
+
+<h3 id="s2-4"><span class="num">2.4</span>資料流 C：傳輸（Target pull）</h3>
+<p class="prose">一筆義務從 Target 輪詢到 Source 標記 COMPLETED 的正常路徑。所有動作都由 Target 主動發起；Source 只回答與記帳。</p>
+<div class="fig"><figure>
+<div class="stepbar"><button type="button" class="btn" id="seq-replay">重播</button></div>
+<div class="scroll">
+<svg id="seq" class="seq" viewBox="0 0 960 530" role="img" aria-label="Target 拉取一筆檔案的時序：GET /pending 取清單、查 received 列、GET /file 串流下載、驗證後 link 發布、寫 received、POST /report DONE，Source 以條件更新標 COMPLETED">
+  <g class="lane-h tgt"><rect x="20" y="10" width="180" height="36" rx="5"/><text class="t b" x="110" y="32" text-anchor="middle">Target NAS + received 表</text></g>
+  <g class="lane-h tgt"><rect x="240" y="10" width="180" height="36" rx="5"/><text class="t b" x="330" y="32" text-anchor="middle">Target sync service</text></g>
+  <g class="lane-h src"><rect x="540" y="10" width="180" height="36" rx="5"/><text class="t b" x="630" y="32" text-anchor="middle">Source sync service</text></g>
+  <g class="lane-h src"><rect x="760" y="10" width="180" height="36" rx="5"/><text class="t b" x="850" y="32" text-anchor="middle">Source NAS + obligation 表</text></g>
+  <path class="lane" d="M110 46 V520"/><path class="lane" d="M330 46 V520"/><path class="lane" d="M630 46 V520"/><path class="lane" d="M850 46 V520"/>
+  <g class="msg" style="--i:0"><path class="edge tgt" d="M330 84 H630"/><text class="t lbl tgt" x="480" y="77" text-anchor="middle">GET /pending?target=&amp;limit=200（每 5 s）</text></g>
+  <g class="msg" style="--i:1"><path class="edge src" d="M630 122 H850"/><text class="t lbl src" x="740" y="115" text-anchor="middle">PENDING 且到期、未 paused，FIFO</text></g>
+  <g class="msg" style="--i:2"><path class="edge src ret" d="M630 160 H330"/><text class="t lbl src" x="480" y="153" text-anchor="middle">清單：manifest 欄位、incarnation、epoch</text></g>
+  <g class="msg" style="--i:3"><path class="edge tgt" d="M330 198 H110"/><text class="t lbl tgt" x="220" y="191" text-anchor="middle">查 in-flight set 與 received 列</text></g>
+  <g class="msg" style="--i:4"><path class="edge tgt" d="M330 236 H630"/><text class="t lbl tgt" x="480" y="229" text-anchor="middle">GET /file/&lt;identity&gt;?target=</text></g>
+  <g class="msg" style="--i:5"><path class="edge src" d="M630 274 H850"/><text class="t lbl src" x="740" y="267" text-anchor="middle">查義務 → 讀 &lt;key&gt;（403 / 410 / 503）</text></g>
+  <g class="msg" style="--i:6"><path class="edge src ret" d="M630 312 H330"/><text class="t lbl src" x="480" y="305" text-anchor="middle">streaming bytes（4 併發、≤50 MB/s 自限）</text></g>
+  <g class="msg" style="--i:7"><path class="edge tgt" d="M330 350 H110"/><text class="t lbl tgt" x="220" y="343" text-anchor="middle">寫 .writing → 驗 size/digest → link &lt;key&gt;</text></g>
+  <g class="msg" style="--i:8"><path class="edge tgt" d="M330 388 H110"/><text class="t lbl tgt" x="220" y="381" text-anchor="middle">received upsert valid, (inc, e)</text></g>
+  <g class="msg" style="--i:9"><path class="edge tgt" d="M330 426 H630"/><text class="t lbl tgt" x="480" y="419" text-anchor="middle">POST /report DONE(e) + incarnation</text></g>
+  <g class="msg" style="--i:10"><path class="edge src" d="M630 464 H850"/><text class="t lbl src" x="740" y="457" text-anchor="middle">COMPLETED（條件：inc, epoch, PENDING）</text></g>
+  <g class="msg" style="--i:11"><path class="edge src ret" d="M630 502 H330"/><text class="t lbl src" x="480" y="495" text-anchor="middle">ACK {ACCEPTED, epoch}</text></g>
+</svg>
+</div>
+<figcaption>正常路徑。Target 每 5 s 對每個 Source 輪詢；每 Source 一個佇列、4 個全域槽 round-robin（D41），總速率 ≤ 50 MB/s（D52）。Source 收 DONE(e) 做條件更新：incarnation、epoch 與 state = PENDING 全對才 COMPLETED，否則 ACK STALE（D26, D55, D55 修 2）。</figcaption>
+</figure></div>
+<p class="prose"><strong>拉取前的閘門</strong>：</p>
+<ul class="prose">
+<li>儲存閘門（D43）：任一儲存類失敗或容量低於門檻 → 立即關閉，所有 worker 取下一筆前檢查；每輪 statfs 成功 → 半開，放一個 worker 拉一筆真實工作 → 成功全開、失敗再關。</li>
+<li>NFS 有界執行器滿 = 閘門關閉（D51）；in-flight set 已有 → 跳過。</li>
+<li><code>/pending</code> 回 state = PENDING 且 next_attempt_at ≤ now 且 target 未 paused，按 source_ready_at FIFO，附 manifest 欄位、incarnation、epoch（D12, D13, D42, D55）；Source 記憶體記該 Target 的 last_pending_at 與本輪交付集合（顯示 UNREACHABLE / IN_PROGRESS 用）。</li>
+<li><code>/file</code>：Source 查義務存在否則 403；工作預算滿回 503，Target 對該 Source 跳過本輪、不記 FAILED（D40, D30 修 3, D30 修 4）。</li>
+</ul>
+<p class="prose"><strong>Target 查 received 列後的動作</strong>（既有列 (inc′, r, valid) 對交付 (inc, e)；D55, D55 修 2）：</p>
+<div class="tbl wrap"><table>
+<thead><tr><th>既有 received 列</th><th>動作</th></tr></thead>
+<tbody>
+<tr><td>inc′ = inc 且 r = e 且 valid</td><td>直接 report DONE(e)，不碰檔</td></tr>
+<tr><td>inc′ = inc 且 r = e 且 invalid</td><td>跳過本次：不下載、不送 DONE、不建事件；既有事件 X 的重送照常，等 X 被接受與更高代次交付</td></tr>
+<tr><td>inc′ = inc 且 r &lt; e</td><td><strong>修復授權</strong>：下載驗證後 rename(.writing, <code>&lt;key&gt;</code>) 原子覆蓋 → received 寫回 valid, (inc, e) → DONE(e)</td></tr>
+<tr><td>inc′ = inc 且 r &gt; e</td><td>過期交付（佇列中的舊交付）：跳過、不改列，記 <code>stale_delivery_count</code>；連續多輪才告警疑似 Source 回退</td></tr>
+<tr><td>inc′ ≠ inc 且 valid 且 identity/size/digest 與交付一致</td><td><strong>換錨</strong>：列改 (inc, e)，DONE(e)，不讀檔，不重設 Deep 驗證時間</td></tr>
+<tr><td>inc′ ≠ inc 其餘</td><td>修復授權（同 r &lt; e）</td></tr>
+<tr><td>無列</td><td>走 link 路徑（下表）</td></tr>
+</tbody></table></div>
+<p class="prose"><strong>下載驗證後的發布</strong>（streaming → <code>&lt;content dir&gt;/&lt;key&gt;.&lt;uuid&gt;.writing</code> + DigestInputStream；D12, D51）：</p>
+<div class="tbl wrap"><table>
+<thead><tr><th>結果</th><th>動作</th><th>決策</th></tr></thead>
+<tbody>
+<tr><td>size / digest 符合，link 成功</td><td>received upsert valid, (inc, e) → POST /report DONE(e)</td><td class="ref">D12</td></tr>
+<tr><td>符合但 link 得 EEXIST，重算 <code>&lt;key&gt;</code> digest = manifest</td><td>received upsert valid、DONE(e)（F10）</td><td class="ref">D12, D55</td></tr>
+<tr><td>符合但 EEXIST 且 digest ≠ manifest</td><td>同一 Target 交易：無列則原子 INSERT invalid{observed, event_id X, (inc, e), report_pending}，已 invalid 則沿用 X → 刪 .writing、釋放 in-flight，不就地替換 → 背景送 CORRUPT{event_id}</td><td class="ref">D54, D54 修, D55</td></tr>
+<tr><td>size / digest 不符</td><td>刪 .writing → POST /report FAILED{reason}（單檔問題）</td><td class="ref">D12</td></tr>
+</tbody></table></div>
+<p class="prose"><strong>Source 收 report</strong>（所有 report 帶 incarnation 與交付時的 epoch；LOST / CORRUPT 另帶 event_id）：</p>
+<div class="tbl wrap"><table>
+<thead><tr><th>report</th><th>Source 動作</th><th>決策</th></tr></thead>
+<tbody>
+<tr><td>DONE(e)</td><td>UPDATE obligation SET COMPLETED, completed_at = now(Source) WHERE incarnation = inc AND epoch = e AND state = PENDING；否則 ACK STALE</td><td class="ref">D26, D55, D55 修 2</td></tr>
+<tr><td>FAILED</td><td>attempts++, next_attempt_at = now + backoff(≤15 min)；digest 不符 / 4xx 反覆 → QUARANTINED</td><td class="ref">D12a</td></tr>
+<tr><td>LOST / CORRUPT，新 event_id</td><td>同一交易：obligation_history、epoch + 1、state → PENDING（不論原狀態）→ ACK{ACCEPTED, epoch}</td><td class="ref">D55</td></tr>
+<tr><td>LOST / CORRUPT，同 event_id 重送</td><td>不加代 → ACK{DUPLICATE, accepted_epoch, current_epoch}</td><td class="ref">D55 修</td></tr>
+<tr><td>義務不存在</td><td>ACK{STALE, OBLIGATION_NOT_FOUND}</td><td class="ref">D54 修</td></tr>
+<tr><td>舊 incarnation 的 LOST / CORRUPT</td><td>義務存在、去重、非 QUARANTINED 下照常加代；QUARANTINED 只記歷史不重開</td><td class="ref">D55 修 2</td></tr>
+</tbody></table></div>
+<p class="prose"><strong>Target 收 ACK</strong>：ACCEPTED / DUPLICATE → 清同一 event_id 的 report_pending；STALE{OBLIGATION_NOT_FOUND} → 保持 invalid 與 report_pending，有上限退避重送；不改 valid；ACK 任何欄位不得用於 DONE，代次只來自交付（D54, D54 修, D55 修）。</p>
+<div class="callout">
+<p>Target 停機後由 Target 自限速率追平；sync 主機單獨停機時 App 照寫，恢復後最多九個 Target 同時來追，Source 對外 <code>/file</code> 總量預算 100 MB/s 管吞吐，<code>/file</code> 工作預算 48 管卡住時的占用（D52、D30 修 3）。修復不就地替換：代次只從 <code>/pending</code> 交付取得，ACK 不授權換代，代價是多等一輪輪詢加一次 MB 級重下載（D55）。</p>
+</div>
+
+<h3 id="s2-5"><span class="num">2.5</span>資料流 D：對帳</h3>
+<p class="prose">增量拉取抓不到缺席，所以 Target 端的遺失與損壞一律由 Target 自查回報；Source 端的 <code>/received</code> 只負責補完成與比對紀錄。</p>
+<div class="tbl wrap"><table>
+<thead><tr><th>誰 · 多久</th><th>步驟</th><th>決策</th></tr></thead>
+<tbody>
+<tr><td><span class="badge src">Source</span><br>Shallow check<br>每 6 h</td><td>
+<strong>①</strong> NAS 內容目錄（搜尋時窗 30 天，逐小時）vs DB file_identity 該小時集合 → 差集 ingest<br>
+<strong>①′</strong> DB 全部未完成義務（含窗外）直接 stat content_path：明確不存在 → 義務轉 QUARANTINED{SOURCE_LOST} 並寫一次 obligation_history{UNRECOVERABLE}，<code>/file</code> 回 410；timeout / 權限 / 讀取失敗 → unknown，不判遺失<br>
+<strong>②</strong> 對每個 Target GET <code>/received?since=&lt;cursor&gt;</code>（每列含 incarnation、epoch、valid）：Target 有 valid 列且 Source 未 COMPLETED → UPDATE … WHERE incarnation = ? AND epoch = ? AND state = PENDING；延遲抵達的舊回應同樣受此檢查。digest 紀錄不符 → QUARANTINED。Target 不可達 / 503（rebuild 中）→ 該範圍標 unknown，保留上次結果<br>
+<strong>③</strong> INSERT inspection{scope, cutoff, checked, unknown, diffs, repairs}
+</td><td class="ref">D19, D50, D56 ③, D33 修 2, D55 修, D29 修 2, D29 修</td></tr>
+<tr><td><span class="badge tgt">Target</span><br>Shallow 自查<br>每 6 h</td><td>保留期內（received.source_ready_at）全部 valid received 列（invalid 列略過，列為已知異常，不計本輪覆蓋率），逐內容小時目錄枚舉名字並讀 size：缺或 size 不符 → <code>WHERE valid = true</code> 條件更新原子標 invalid + event_id X + report_pending，更新 0 列則沿用既有 X → 背景送 LOST；屬性讀不到即 unknown 不算通過，READDIRPLUS 只是優化</td><td class="ref">D19 修, D19 修 2, D19 修 3, D54, D54 修</td></tr>
+<tr><td><span class="badge tgt">Target</span><br>Deep 自查<br>滾動</td><td>讀本地 <code>&lt;key&gt;</code> 重算 digest 與 received.digest 比對 → 不符 → 同上標 invalid → 背景送 CORRUPT；讀取預算 20 MB/s。<br><code>deep_check_cycle_days</code> 為觀測值；T30 偵測期限為 operational policy 常數，壓測後人工設定，告警 = 觀測 &gt; 常數，不自動放寬</td><td class="ref">D16 修, D52 修 2</td></tr>
+</tbody></table></div>
+<ul class="prose">
+<li>兩種自查都跳過 in-flight 集合裡的 identity（D55）。只回報異常；覆蓋率由 Target 曝 <code>shallow_check_coverage</code> / <code>deep_check_coverage</code>。</li>
+<li>Source 收新 event 的 LOST / CORRUPT → 寫歷史、epoch + 1、重開 PENDING（QUARANTINED 只記歷史），下輪 <code>/pending</code> 以新代次重給；Target 見 r &lt; e 即執行替換（D55, D55 修 2）。</li>
+</ul>
+
+<h3 id="s2-6"><span class="num">2.6</span>義務狀態機（Source 端持有）</h3>
+<p class="prose">持久化只有三種狀態（D42）：</p>
+<div class="fig"><figure>
+<svg viewBox="0 0 800 300" role="img" aria-label="義務狀態機：ingest 進 PENDING；report DONE 到 COMPLETED；FAILED 反覆或 SOURCE_LOST 到 QUARANTINED；ops release 回 PENDING；LOST 或 CORRUPT 讓 COMPLETED 與 PENDING 加代重開">
+  <text class="t b" x="40" y="146">ingest</text><text class="t s" x="40" y="162">manifest × Policy</text>
+  <path class="edge flow src" d="M120 148 H230"/>
+  <g class="state"><rect x="230" y="120" width="170" height="56" rx="6"/><text x="315" y="153" text-anchor="middle">PENDING</text></g>
+  <g class="state done"><rect x="590" y="120" width="170" height="56" rx="6"/><text x="675" y="153" text-anchor="middle">COMPLETED</text></g>
+  <g class="state q"><rect x="230" y="230" width="170" height="56" rx="6"/><text x="315" y="263" text-anchor="middle">QUARANTINED</text></g>
+  <path class="edge flow src" d="M400 136 H590"/>
+  <text class="t lbl src" x="495" y="128" text-anchor="middle">report DONE(e) · 對帳 ② 補完成</text>
+  <path class="edge flow tgt" d="M590 160 H400"/>
+  <text class="t lbl tgt" x="495" y="190" text-anchor="middle">LOST / CORRUPT / 紀錄不符</text>
+  <text class="t lbl tgt" x="495" y="204" text-anchor="middle">epoch + 1，保留歷史，重開</text>
+  <path class="edge flow tgt" d="M280 120 C 280 78, 350 78, 350 120"/>
+  <text class="t lbl tgt" x="315" y="70" text-anchor="middle">LOST / CORRUPT → epoch + 1（PENDING 亦重開）</text>
+  <path class="edge" d="M340 176 V230"/>
+  <text class="t lbl" x="352" y="200">FAILED 反覆（digest 不符 / 4xx）</text>
+  <text class="t lbl" x="352" y="214">內容明確不存在 {SOURCE_LOST}</text>
+  <path class="edge" d="M290 230 V176"/>
+  <text class="t lbl" x="278" y="200" text-anchor="end">ops release</text>
+  <text class="t s" x="278" y="214" text-anchor="end">attempts 清零，不解除 pause</text>
+  <text class="t s" x="420" y="258">只記歷史，等 ops release；</text>
+  <text class="t s" x="420" y="274">SOURCE_LOST 沒有任何 ops 動作能結清，只留證據（D56 ⑥）</text>
+</svg>
+<figcaption>LOST / CORRUPT 只重開 COMPLETED 與 PENDING；QUARANTINED 只記歷史，等 ops release，release 不解除 pause（D55 修 2）。未完成義務不按時間刪，永久追蹤。</figcaption>
+</figure></div>
+<p class="prose">spec §14 其餘狀態為 <code>/status</code> 的顯示推導：</p>
+<div class="tbl"><table>
+<thead><tr><th>顯示狀態</th><th>推導自</th></tr></thead>
+<tbody>
+<tr><td>RETRY_WAIT</td><td>PENDING 且 next_attempt_at &gt; now</td></tr>
+<tr><td>IN_PROGRESS / VERIFYING</td><td>Source 記憶體：上一輪交給該 Target 且未回報（重啟即失，只影響顯示）</td></tr>
+<tr><td>BLOCKED{paused}</td><td><code>target_control.paused</code>（持久化，ops 寫）</td></tr>
+<tr><td>BLOCKED{unreachable}</td><td>記憶體 last_pending_at 過期 60 s</td></tr>
+<tr><td>BLOCKED{capacity / storage}</td><td>Target 自己的 <code>capacity_alert_status</code>、<code>storage_health</code> 指標</td></tr>
+</tbody></table></div>
+<p class="prose">所有非 COMPLETED 義務皆計入 backlog 與 age（§14）；pause、unreachable、capacity 都不碰 obligation 列。</p>
+
+<h3 id="s2-7"><span class="num">2.7</span>Consumer 讀取（Target 端，library）</h3>
+<p class="prose"><code>exists(identity, dataClass)</code>：library 呼叫本 Node sync service <code>GET /locate/&lt;identity&gt;?dataClass=</code>。sync service 查 <code>file_identity</code>（Source 角色）或 <code>received</code>（Target 角色）：</p>
+<div class="tbl"><table>
+<thead><tr><th>查到</th><th>回覆</th></tr></thead>
+<tbody>
+<tr><td>valid 列</td><td>READY + path</td></tr>
+<tr><td>invalid 列</td><td>DATA_NOT_READY（D54）</td></tr>
+<tr><td>無列且 source == 本 Node</td><td>DATA_NOT_READY（掃描 15 s 內出現，D46）</td></tr>
+<tr><td>無列且 Policy (source, class) 含本 Node</td><td>DATA_NOT_READY</td></tr>
+<tr><td>無列且 Policy 不含本 Node</td><td>NOT_EXPECTED</td></tr>
+<tr><td>sync service 不可達且無快取</td><td>UNAVAILABLE</td></tr>
+</tbody></table></div>
+<p class="prose">library 快取 READY 結果。<code>read</code> 僅 READY 時開 path 給 InputStream。不問 Source（D15 修、D23 修）。為什麼不直接 stat：路徑含 Finalize 日期而 identity 沒有；NOT_EXPECTED 需要 Data class 而 identity 沒有。read 不在 Local Transaction SLO 內，本 Node sync service 不是 Remote Node 也不是 CP。</p>
+
+<h2 id="s3"><span class="num">3</span>持久化</h2>
+<p class="prose"><strong>檔案</strong>：見 docs/design/file-inventory.md。</p>
+<p class="prose"><strong>DB schema</strong>（D24，Oracle，sync 自有 schema，SQL 可攜、H2 Oracle mode 測試）：</p>
+<div class="tbl wrap"><table>
+<thead><tr><th>表</th><th>欄位</th><th>索引</th></tr></thead>
+<tbody>
+<tr><td><code>file_identity</code></td><td>source_node, namespace, logical_key, data_class, size, digest, source_ready_at, content_path</td><td>PK (source_node, namespace, logical_key)</td></tr>
+<tr><td><code>obligation</code></td><td>identity_ref, target_node, state ∈ {PENDING, QUARANTINED, COMPLETED}, epoch, attempts, next_attempt_at, last_error, completed_at</td><td>(target_node, state, next_attempt_at)；(state, source_ready_at) 供 age</td></tr>
+<tr><td><code>received</code></td><td>identity_ref, size, digest, source_ready_at, published_at, valid, invalid_reason, observed_digest, event_id, incarnation, epoch, report_pending</td><td>PK identity_ref；(published_at) 供 <code>/received?since</code>；(report_pending) 供背景重送</td></tr>
+<tr><td><code>node_meta</code></td><td>incarnation（rebuild 時換新的 UUID）、rebuild_in_progress（與新 incarnation 同交易寫入，重啟見旗標維持封鎖並重做，D29 修 2 / 修 3）</td><td>單列</td></tr>
+<tr><td><code>inspection</code></td><td>scope, cutoff, started_at, finished_at, checked, unknown, diffs, repairs</td><td>(finished_at)</td></tr>
+<tr><td><code>ops_audit</code></td><td>who, at, action, scope, reason, result</td><td>(at)</td></tr>
+<tr><td><code>target_control</code></td><td>target_node, paused, paused_by, paused_at, reason</td><td>PK target_node</td></tr>
+<tr><td><code>obligation_history</code></td><td>identity_ref, target_node, kind ∈ {LOST, CORRUPT, REOPEN, RELEASE, UNRECOVERABLE, INTEGRITY_FAILURE, IDENTITY_CONFLICT}（事故類以 (identity_ref, target_node, kind) 只寫一次，D33 修 2）, event_id, epoch_after, expected_digest, observed_digest, at</td><td>(identity_ref, target_node)</td></tr>
+</tbody></table></div>
+<p class="prose">與 D24 的差異（D42、D47、D54、D55、D56）：obligation 只存三種 state 加 <code>epoch</code>，無 <code>last_handed_at</code> 與 <code>paused</code>；<code>target_liveness</code> 改記憶體；新增 <code>target_control</code>（pause flag）、<code>obligation_history</code>（IR-03 證據，以 event_id 去重）、<code>node_meta</code>（incarnation、rebuild_in_progress，D29 修 2）；received 加 invalid 狀態、待回報欄位與 source_ready_at（purge 與自查範圍的尺，D56）；purge 以 identity 整組 COMPLETED 為條件，未完成不按時間刪（D35 修）。單一 process 唯一寫入者，不用行鎖。</p>
+<p class="prose"><strong>HTTP 端點</strong>（Node 間，shared token + HTTPS，D14）：</p>
+<div class="tbl wrap"><table>
+<thead><tr><th>端點</th><th>語意</th></tr></thead>
+<tbody>
+<tr><td><code>GET /pending?target=&amp;state=PENDING|COMPLETED&amp;cursor=</code></td><td>COMPLETED 供 Target rebuild 取基準（D49 ②）</td></tr>
+<tr><td><code>GET /file/&lt;identity&gt;?target=</code></td><td>查義務否則 403（D40）；內容明確不存在回 410（D56 ③）</td></tr>
+<tr><td><code>POST /report {DONE|FAILED|LOST|CORRUPT}</code></td><td>帶 incarnation、epoch，LOST / CORRUPT 另帶 event_id；ACK {ACCEPTED, epoch | DUPLICATE, accepted_epoch, current_epoch | STALE, OBLIGATION_NOT_FOUND}，欄位僅供告知（D43, D55 修, D54 修）</td></tr>
+<tr><td><code>GET /received?since=</code></td><td>每列含 incarnation、epoch、valid；rebuild 中連同 <code>/pending</code>、<code>/report</code> 一起 503（D29 修 2）</td></tr>
+<tr><td>Node 內</td><td><code>GET /policy</code>、<code>GET /locate/&lt;identity&gt;?dataClass=</code>（rebuild 中 503）、ops API、Actuator</td></tr>
+</tbody></table></div>
+
+<h2 id="s4"><span class="num">4</span>Control Plane 與設定</h2>
+<h3 id="s4-1"><span class="num">4.1</span>沒有 Control Plane process</h3>
+<p class="prose">spec §11 對 CP 的要求（版本化、發布者與時間稽核、各 Node 採用狀態、不得為 Data Plane 即時依賴）由 git commit + Node metric + Grafana / CLI 扇出全部滿足；v1 Policy 不可變、operational policy 變動極少，常駐服務換不到功能（ADR-0003, D17）。「CP 壞掉」= git 或 CD 不可用 = 不能發新版，資料流、重啟、本地查詢全部不受影響。</p>
+<h3 id="s4-2"><span class="num">4.2</span>設定四層與設定流</h3>
+<div class="fig"><figure>
+<div class="scroll">
+<svg viewBox="0 0 1000 236" role="img" aria-label="設定流：git 不可變版本經 PR merge 發布，CD 寫 candidate 並 rename，systemctl restart 後啟動時驗證，通過則 active 轉 lkg、candidate 轉 active；驗證失敗留 candidate 用 active，active 載入失敗用 lkg">
+  <g><rect class="box" x="20" y="30" width="136" height="64" rx="6"/><text class="t b" x="88" y="52" text-anchor="middle">git</text><text class="t m" x="88" y="68" text-anchor="middle">configs/v&lt;N&gt;.json</text><text class="t s" x="88" y="84" text-anchor="middle">不可變</text></g>
+  <path class="edge flow" d="M156 62 H186"/>
+  <g><rect class="box" x="186" y="30" width="136" height="64" rx="6"/><text class="t b" x="254" y="56" text-anchor="middle">PR merge</text><text class="t s" x="254" y="76" text-anchor="middle">latest = 發布</text></g>
+  <path class="edge flow" d="M322 62 H352"/>
+  <g><rect class="box" x="352" y="30" width="136" height="64" rx="6"/><text class="t b" x="420" y="52" text-anchor="middle">CD 寫入</text><text class="t m" x="420" y="68" text-anchor="middle">candidate.json.tmp</text><text class="t s" x="420" y="84" text-anchor="middle">→ rename</text></g>
+  <path class="edge flow" d="M488 62 H518"/>
+  <g><rect class="box" x="518" y="30" width="136" height="64" rx="6"/><text class="t b" x="586" y="56" text-anchor="middle">systemctl restart</text><text class="t s" x="586" y="76" text-anchor="middle">每次變更 30 s lag</text></g>
+  <path class="edge flow" d="M654 62 H684"/>
+  <g><rect class="box" x="684" y="30" width="136" height="64" rx="6"/><text class="t b" x="752" y="52" text-anchor="middle">啟動時驗證</text><text class="t s" x="752" y="68" text-anchor="middle">schema · 版本遞增</text><text class="t s" x="752" y="84" text-anchor="middle">Policy 段 = active</text></g>
+  <path class="edge flow" d="M820 62 H850"/>
+  <g class="ready"><rect class="box" x="850" y="30" width="136" height="64" rx="6"/><text class="t b" x="918" y="52" text-anchor="middle">active → lkg</text><text class="t b" x="918" y="68" text-anchor="middle">candidate → active</text><text class="t s" x="918" y="84" text-anchor="middle">服務後才曝新版本</text></g>
+  <path class="edge" d="M752 94 V132"/>
+  <rect x="520" y="132" width="360" height="40" rx="6" class="box" style="stroke:var(--warn)"/>
+  <text class="t" x="700" y="156" text-anchor="middle">驗證失敗 → 留 candidate、用 active、activation_failure_count++</text>
+  <path class="edge" d="M918 94 V184"/>
+  <rect x="520" y="184" width="420" height="40" rx="6" class="box" style="stroke:var(--warn)"/>
+  <text class="t" x="730" y="208" text-anchor="middle">active 缺或載入失敗 → 用 lkg（LKG 保證完整設定）</text>
+</svg>
+</div>
+<figcaption>設定流（D17、D18、D45）。設定物件 process 內不可變，不熱載入；新 <code>active_config_version</code> 只在載入並開始服務後才曝出。</figcaption>
+</figure></div>
+<p class="prose">library 經 <code>GET /policy</code> 取 Policy 段，記憶體快取 + 本機 fallback 檔。四層：git → sync 主機本機檔 → sync service 記憶體 → library 快取。</p>
+<h3 id="s4-3"><span class="num">4.3</span>Data Plane 獨立性</h3>
+<p class="prose">每個 Node 的持久化 local state（active.json、lkg.json、Oracle sync schema、NAS manifest）足以在 CP 不可用時：繼續 replication、retry、reconciliation 與本地交易（AC-CP-01）；Data Plane 重啟後從本地設定與狀態恢復（AC-CP-02）；以 CLI 查本地狀態並執行受控操作（AC-CP-03）。唯一例外是新 Node 首次初始化需人工放第一份 active.json（ADR-0003）。</p>
+<h3 id="s4-4"><span class="num">4.4</span>設定變更的邊界</h3>
+<p class="prose">可更新項目限 operational policy（第 8 章可調項清單）。Policy 段變更一律拒絕並上報（AC-CFG-01、T22）；設定更新不得靜默消除 backlog，pause / release 皆為 ops 動作寫 audit，不是設定。</p>
+
+<h2 id="s5"><span class="num">5</span>Application 整合契約</h2>
+<p class="prose">Application 必須（D8、D23、D23 修）：</p>
+<ol class="steps">
+<li>透過 library 寫入，宣告 Namespace、Data class、Logical key；Logical key 對不同內容唯一（含 run id / timestamp）。</li>
+<li><code>finalize()</code> 回 SUCCESS 才 commit 業務交易並記錄 identity；PENDING_CONFIRMATION 不 commit，重呼 <code>finalize()</code> 至確定；FAILURE 視為交易失敗。</li>
+<li>交易重跑直接 beginWrite + finalize，Finalize 冪等保證不重複；不需先 exists（D46）。Consumer 讀取以 <code>exists(identity, dataClass)</code> 查詢。</li>
+<li>開 Actuator <code>/actuator/prometheus</code>，讓 library 的 Local Transaction 指標可被抓取。</li>
+<li>部署前 App 主機與 sync 主機 NTP 同步；NFS 以 <code>hard</code> mount。</li>
+<li>library 的 NFS 執行器滿時 beginWrite 會立即回 FAILURE(UNAVAILABLE)，Application 視為本次交易失敗（D51）。</li>
+</ol>
+<p class="prose">Framework 承諾：SUCCESS 後義務成立且 crash 可重發現；不參與 Application 的 DB 交易；Finalize 後 Application rollback 產生的孤兒 Ready 檔為可接受浪費。</p>
+<p class="prose">library 設定只有四項：mount root、sync service URL、NFS 操作 timeout、Policy fallback 檔路徑。</p>
+
+<h2 id="s6"><span class="num">6</span>故障窗口表</h2>
+<p class="prose">每列：故障 → 設計如何封閉 → 決策 → 驗收測試。這是 §21.2 要求的 Requirement→Design→Test 核心；ops 動作見第 8 章。</p>
+<div class="tbl wrap"><table>
+<thead><tr><th>#</th><th>故障窗口</th><th>封閉方式</th><th>決策</th><th>測試</th></tr></thead>
+<tbody>
+<tr><td><kbd class="fid">F1</kbd></td><td>Finalize 第①②步之間 crash</td><td>只有 <code>.writing</code>，無 manifest → Writing / Abandoned 候選，超 TTL 清道夫刪；Application 未拿到 SUCCESS 不 commit</td><td class="ref">D3, D11, D35</td><td>T29</td></tr>
+<tr><td><kbd class="fid">F1b</kbd></td><td>library 暫存檔被清道夫依 TTL 刪掉時操作仍在進行</td><td>link 尚未送出且來源不在 → FAILURE；link 已送出結果未明 → PENDING_CONFIRMATION，重呼 finalize 走 rediscovery；不因暫存檔消失推論未發布</td><td class="ref">D51 修 2</td><td>T25, T29</td></tr>
+<tr><td><kbd class="fid">F2</kbd></td><td>Finalize 第②③步之間 crash</td><td>manifest 有、<code>&lt;key&gt;</code> 無、<code>.writing</code> 有 = Writing；Application 重呼或重跑 finalize 由 library 四項比對 → rediscovery → 依 manifest.content_path 跨目錄補 link；掃描器不代勞，超 TTL 清道夫當 Abandoned；宣告超過 N = 7 天才需再次嘗試發布 → DECLARATION_EXPIRED 換 key</td><td class="ref">D3, D3a, D46, D48 修, D53 修</td><td>T29</td></tr>
+<tr><td><kbd class="fid">F2b</kbd></td><td>寫入橫跨多日後才宣告，或宣告後多日才 link</td><td>content_path 取宣告時刻的小時目錄，<code>.writing</code> 留原處跨目錄 link；再次嘗試發布受 N = 7 天限制；固定預算 10.25 天，清道夫停跑（含 NAS 中斷、rebuild 隔離、服務停機）&lt; 19 天，超過失去發現保證並告警</td><td class="ref">D48 修, D53 修, D56 ④</td><td>T11, T29</td></tr>
+<tr><td><kbd class="fid">F3</kbd></td><td>Finalize 第③步後回覆遺失</td><td>重呼 finalize：manifest EEXIST 同 digest、link EEXIST 且重讀 <code>&lt;key&gt;</code> digest 相符 → SUCCESS，不重複資料</td><td class="ref">D3a, D44</td><td>T29</td></tr>
+<tr><td><kbd class="fid">F4</kbd></td><td>manifest 寫到一半（NFS 中斷或兩個寫者並發）</td><td>manifest 以 tmp + link 原子建立，NAS 上只有「完整存在」或「不存在」；tmp 殘留由清道夫刪</td><td class="ref">D44</td><td>T13, T20, T29</td></tr>
+<tr><td><kbd class="fid">F5</kbd></td><td>同 identity 不同內容（含跨小時重跑）</td><td>manifest 位置由 identity 決定，EEXIST 且四項任一不同 → CONFLICT，不覆寫；<code>&lt;key&gt;</code> link 原子失敗</td><td class="ref">D3, D48, D53</td><td>T20</td></tr>
+<tr><td><kbd class="fid">F5b</kbd></td><td>卡住的舊 link 在 manifest 被換掉後才成功</td><td>manifest 永不刪、不提供 release-claim，宣告不會被換掉；<code>&lt;key&gt;</code> 路徑 ≠ manifest.content_path 者不算 Ready</td><td class="ref">D53</td><td>T20, T25</td></tr>
+<tr><td><kbd class="fid">F6</kbd></td><td>Source Ready 後、task 建立前 sync service crash</td><td>義務 = manifest × Policy，掃描重發現；不依賴 task 表</td><td class="ref">D1, D10, D19</td><td>T18, T11</td></tr>
+<tr><td><kbd class="fid">F7</kbd></td><td>掃描漏掉（lost trigger）</td><td>增量掃與全量掃共用冪等 ingest；全量掃每 6 h 覆蓋整個保留期必補</td><td class="ref">D10, D19 ①, D50</td><td>T11</td></tr>
+<tr><td><kbd class="fid">F8</kbd></td><td>sync service process crash / host restart / upgrade</td><td>process 無狀態；DB 義務原樣；systemd 5 s 重啟；30 s 內服務</td><td class="ref">D5, D34</td><td>T06, T07, T32</td></tr>
+<tr><td><kbd class="fid">F8b</kbd></td><td>sync 主機硬體死亡</td><td><code>up{node}</code> 消失即 page；值班依 fencing 清單確認原機已死後啟動專屬冷備；目標 15 min 含偵測與反應；期間 App 照寫、lag 漲、義務不丟</td><td class="ref">D37, D37 修</td><td>T07</td></tr>
+<tr><td><kbd class="fid">F9</kbd></td><td>Target 下載中斷</td><td><code>.writing</code> 非正式名，不可見；下輪重拉 truncate 覆蓋；殘留由清道夫刪</td><td class="ref">D12, D28, D35</td><td>T08</td></tr>
+<tr><td><kbd class="fid">F10</kbd></td><td>Target publish 後、received 寫入前 crash</td><td>下輪重拿 → 無列走 link 路徑 → EEXIST → 重算 digest 對基準 → 相符補 row、DONE，不重下載；不符走 F14</td><td class="ref">D12, D55</td><td>T19</td></tr>
+<tr><td><kbd class="fid">F11</kbd></td><td><code>/report DONE</code> 遺失</td><td>同 F10；Source Shallow ② 由 <code>/received</code> 補 COMPLETED</td><td class="ref">D12, D19</td><td>T19</td></tr>
+<tr><td><kbd class="fid">F12</kbd></td><td>Duplicate trigger / 同義務重複交付</td><td>Target 先查 received 與 in-flight set；link 原子；Source 收重複 DONE 冪等</td><td class="ref">D12, D3</td><td>T09</td></tr>
+<tr><td><kbd class="fid">F13</kbd></td><td>Integrity mismatch（傳輸中）</td><td>digest 不符不發布、report FAILED；反覆 → QUARANTINED 留 expected/observed</td><td class="ref">D12a</td><td>T10, T17</td></tr>
+<tr><td><kbd class="fid">F14</kbd></td><td>已完成 Target 檔其後遺失或損壞</td><td>Target 發現 → 同一交易 received 標 invalid + event_id → 背景 LOST / CORRUPT；Source 寫歷史、epoch + 1、重開；下輪交付 r &lt; e 即修復授權，rename 覆蓋；延遲的舊 DONE 因加代與條件更新失效</td><td class="ref">D16 修, D19 修 2, D54, D55</td><td>T30</td></tr>
+<tr><td><kbd class="fid">F14b</kbd></td><td>異常已寫 Target DB、report 送出前 crash</td><td>received 列的 report_pending 持久化，重啟後背景重送同一 event_id；<code>/locate</code> 期間不回 READY</td><td class="ref">D54</td><td>T30</td></tr>
+<tr><td><kbd class="fid">F14c</kbd></td><td>ACK 遺失後重送 / 舊 ACK 抵達</td><td>Source 以 event_id 去重回 DUPLICATE 與當初的 accepted_epoch；ACK 只清同一 event_id 的 pending，不改 valid，不授權換代</td><td class="ref">D54, D55 修</td><td>T19</td></tr>
+<tr><td><kbd class="fid">F14d</kbd></td><td>Source DB 重建後舊代次回報</td><td>舊 DONE 因 incarnation 不符 STALE；舊 LOST / CORRUPT 在義務存在、去重、非 QUARANTINED 下加代重交付；Target 見 incarnation 不同：valid 且基準一致換錨 DONE 不讀檔，否則修復</td><td class="ref">D55, D55 修 2, D29 修 2</td><td>T18, T19</td></tr>
+<tr><td><kbd class="fid">F14e</kbd></td><td>DONE(e) 遺失或延遲，自查同時發現異常</td><td>交付 e 遇 invalid 跳過，不同代補完成、不建第二事件；X 接受後 e+1 修復；延遲的 DONE(e) 在加代後抵達 → STALE</td><td class="ref">D55 修 2</td><td>T19, T30</td></tr>
+<tr><td><kbd class="fid">F14f</kbd></td><td>過期交付：佇列中的舊交付在修復後才輪到</td><td>同 incarnation r &gt; e → 跳過、不改列，不算衝突；連續多輪才告警疑似 Source 回退</td><td class="ref">D55 修 2</td><td>T19</td></tr>
+<tr><td><kbd class="fid">F14g</kbd></td><td>LOST / CORRUPT 得 STALE{OBLIGATION_NOT_FOUND}</td><td>保持 invalid 與 report_pending，退避重送；Source 之後補建義務即接受、加代、修復，不與「跳過等 X」互鎖</td><td class="ref">D54 修</td><td>T19, T30</td></tr>
+<tr><td><kbd class="fid">F15</kbd></td><td>Target Node / Storage 停機（≤24 h）</td><td>Target 不來拉，Source 以 staleness 推 UNREACHABLE；義務留 Source DB；其他 Target 不受影響（各自拉）</td><td class="ref">D12a, ADR-0001</td><td>T02, T03, T04, T12, AC-NODE-01～05</td></tr>
+<tr><td><kbd class="fid">F16</kbd></td><td>Target 恢復後 catch-up</td><td>Target 自限並發 4、50 MB/s；FIFO；24 h 內追平 1 TB 有 2× 餘裕</td><td class="ref">D13, D30, D31</td><td>T05, T16, T24, §20</td></tr>
+<tr><td><kbd class="fid">F17</kbd></td><td>遠端 NAS hang 污染本機</td><td>不做 NFS-to-NFS；Source 只讀自己 NAS，Target 只寫自己 NAS；每個 NFS 操作獨立 thread + timeout</td><td class="ref">ADR-0002, D3b</td><td>T12, T25</td></tr>
+<tr><td><kbd class="fid">F18</kbd></td><td>本機 NAS 長時間無回應</td><td>有界執行器無佇列：卡住的 syscall 占槽不釋放，HTTP 或呼叫者 timeout 都不是釋放依據，滿了立即拒絕；library 回 PENDING_CONFIRMATION / UNAVAILABLE；hard mount 不假失敗；systemd 不因 health 重啟；恢復後舊操作靠 uuid 與 link 語意無害完成</td><td class="ref">D3b, D34 修, D51, D51 修, D30 修 4</td><td>T13, T25</td></tr>
+<tr><td><kbd class="fid">F19</kbd></td><td>NFS failover / stale handle</td><td>重試同一 operation identity（同 uuid、同 manifest）；結果由 rediscovery 查證</td><td class="ref">D3a, SR-04</td><td>T13</td></tr>
+<tr><td><kbd class="fid">F20</kbd></td><td>Target 容量不足或 NAS 不健康</td><td>共用閘門立即關閉，最多 4 筆執行中失敗；每輪 statfs 成功後半開一筆探路；Source 只見 UNREACHABLE，原因看 Target 指標；library 端拒寫</td><td class="ref">D43, D21</td><td>T12, T21</td></tr>
+<tr><td><kbd class="fid">F21</kbd></td><td>已知曾 Ready 的 Source 正式內容遺失且義務未完成</td><td>Shallow ①′ 對 content_path 明確得到不存在 → QUARANTINED{SOURCE_LOST} + 一次 UNRECOVERABLE 歷史事件 → 事故告警看事件增量；manifest 消失不等於內容遺失；讀取失敗只計 unknown；永久追蹤，無 ops 動作能結清</td><td class="ref">D56, D33 修 2, RT-01</td><td>T21, T30</td></tr>
+<tr><td><kbd class="fid">F22</kbd></td><td>CP（git / CD）不可用</td><td>不能發新版；Node 只讀本機 active.json；資料流無關</td><td class="ref">D17</td><td>T14, T23, AC-CP-01～03</td></tr>
+<tr><td><kbd class="fid">F23</kbd></td><td>壞設定 / 啟用中 crash</td><td>啟動時驗證，失敗留 candidate 用 active；rename 原子；active 缺或載入失敗用 lkg；新版本只在成功服務後回報</td><td class="ref">D17, D45</td><td>T15, T22, T26, AC-CFG-01～05</td></tr>
+<tr><td><kbd class="fid">F24</kbd></td><td>sync DB 部分遺失或 ops <code>rebuild</code>（表仍在）</td><td>隔離（Node 間端點全 503、停排程、等回寫工作結束、<code>rebuild_in_progress</code> 持久化）→ 換 incarnation → 只補不刪：全掃 30 天搜尋窗補建缺的 file_identity / obligation，既有 COMPLETED / QUARANTINED / PENDING 一律保留，PENDING 的 epoch 重設為 1 → 對帳 ② 跑一次：Target 列 incarnation 不同且 valid 且四項相符 → <code>WHERE incarnation = 現行 AND epoch = 1 AND state = PENDING</code> 補 COMPLETED，<code>/received</code> 游標重設為 0 → received 依 D49 ② 只補缺列 → inspection。不可達的 Target 留 PENDING，下輪 ② 或交付換錨補齊；crash 後重啟見旗標重做；期間該 Node 同步暫停，App 照寫，完成時間待量測</td><td class="ref">D29, D29 修, D29 修 2, D29 修 3, D49, D50, D55 修 2</td><td>T18, T19</td></tr>
+<tr><td><kbd class="fid">F24b</kbd></td><td>sync DB 整庫遺失，或備份還原時 identity 已在窗外</td><td>恢復限制：窗外未完成義務無法重建，連 unknown 都不顯示；DB 備份為 ops 責任，還原後仍 rebuild 換 incarnation</td><td class="ref">D56 ⑤</td><td>T18</td></tr>
+<tr><td><kbd class="fid">F25</kbd></td><td>Target DB（received）遺失</td><td>永不從檔案算基準：向 Source 拉 COMPLETED 義務的 manifest 欄位重建，只補缺列，既有 valid 列與驗證時間保留，digest 由 Deep check 後驗</td><td class="ref">D49, D29 修 2</td><td>T19, T30</td></tr>
+<tr><td><kbd class="fid">F26</kbd></td><td>Reconciliation 期間 Target 不可讀</td><td>該範圍 unknown，保留上次結果與時間，不假報一致</td><td class="ref">D19</td><td>T27</td></tr>
+<tr><td><kbd class="fid">F27</kbd></td><td>Consumer 提前讀</td><td><code>/locate</code> 回 DATA_NOT_READY / NOT_EXPECTED；sync service 不可達回 UNAVAILABLE 不假報不存在；直接讀路徑只見 <code>&lt;key&gt;</code> 存在與否，partial 永不以 <code>&lt;key&gt;</code> 存在</td><td class="ref">D15 修, D23 修, D3</td><td>T28</td></tr>
+<tr><td><kbd class="fid">F28</kbd></td><td>Pause toward one Target</td><td><code>target_control.paused</code> 一個 flag，<code>/pending</code> 過濾該 Target，新舊義務一律涵蓋，仍計 backlog / age；resume 翻回</td><td class="ref">D22, D42</td><td>T31</td></tr>
+<tr><td><kbd class="fid">F30</kbd></td><td>一個 Source 大量 catch-up 餓死其他 Source</td><td>Target 每 Source 一佇列，4 槽 round-robin</td><td class="ref">D41</td><td>T16</td></tr>
+<tr><td><kbd class="fid">F31</kbd></td><td>非 Required target 的 Node 來拉檔</td><td><code>/file</code> 查義務，無則 403</td><td class="ref">D40</td><td>—</td></tr>
+<tr><td><kbd class="fid">F29</kbd></td><td>Prometheus / Alertmanager 不可用</td><td>watchdog 停止 → NMS 告警；CLI 扇出仍可回答 §15</td><td class="ref">D27 修, D20 修</td><td>T14, AC-CP-03</td></tr>
+</tbody></table></div>
+
+<h2 id="s7"><span class="num">7</span>Recovery 與容量算術</h2>
+<div class="tbl wrap"><table>
+<thead><tr><th>項目</th><th>數值</th><th>來源</th></tr></thead>
+<tbody>
+<tr><td>Envelope 最壞 backlog</td><td>Target 停 24 h × 10⁵ 檔 × MB 級 ≈ 1 TB</td><td class="ref">Q10</td></tr>
+<tr><td>追平所需淨排空</td><td>1 TB 欠量 + 1 TB/日新流量，24 h 內 → ≈ 23 MB/s</td><td class="ref">D31</td></tr>
+<tr><td>頻寬預算（共用 NAS）</td><td>Deep 20 MB/s、Target 拉取 50 MB/s、Source 供檔 100 MB/s；本地交易優先由合併負載壓力測試證明</td><td class="ref">D52</td></tr>
+<tr><td>Target 拉取上限</td><td>50 MB/s（10 GbE 的 4%）</td><td class="ref">D30</td></tr>
+<tr><td>餘裕</td><td>envelope 2×；實際 6 h 停機 16×</td><td class="ref">D31</td></tr>
+<tr><td>檔案速率</td><td>2×10⁵ 筆 / 24 h ≈ 2.3 筆/s，<code>/pending</code> 上限 40 筆/s</td><td class="ref">D31</td></tr>
+<tr><td>重啟恢復</td><td>systemd 5 s + 啟動 ≤30 s；不做全量掃</td><td class="ref">D34</td></tr>
+<tr><td>主機死亡恢復</td><td>≤ 15 min，含偵測、值班反應、冷備啟動</td><td class="ref">D37 修</td></tr>
+<tr><td>設定變更</td><td>重啟 30 s lag，不熱載入</td><td class="ref">D45</td></tr>
+<tr><td>DB 重建</td><td>30 天 × 10⁵ × 9 ≈ 2.7×10⁷ 義務；完成時間由全量重建測試量測，期間該 Node 同步暫停；災難路徑</td><td class="ref">D29, D29 修 2, D50</td></tr>
+<tr><td>DB 穩態列數</td><td>已完成部分 obligation ≈ 5.4×10⁷（identity 整組 COMPLETED 後 60 天 purge）；未完成義務不按時間刪，QUARANTINED 累積量 = 隔離率 × 天，無上限，處置在 ops，release / evict / 換 key 不結清 SOURCE_LOST</td><td class="ref">D32, D35 修, D56</td></tr>
+<tr><td>遲到發布預算</td><td>固定項 10.25 天（N 7 + TTL 1 + 清道夫間隔 1 + 時鐘裕度 1 + 對帳 0.25）；清道夫停跑（含 NAS 中斷）&lt; 19 天，operational policy</td><td class="ref">D56 ④</td></tr>
+<tr><td>容量門檻</td><td>reject 10 TB、alert 20 TB；NAS 遠大於此，本版不做容量規劃</td><td class="ref">D30 修</td></tr>
+</tbody></table></div>
+<p class="prose">結構性事實：Source 停機時 App 同停、不產新檔，Source 恢復無 backlog；只有 Target 停機才有 catch-up，且 Target 自限速率，九個 Source 同時供給也不會塞爆（D31）。</p>
+
+<h2 id="s8"><span class="num">8</span>Ops</h2>
+<p class="prose"><strong>Ops API</strong>（每 Node，token 授權，操作寫 <code>ops_audit</code>，D20、D22、D25、D29）：</p>
+<div class="tbl wrap"><table>
+<thead><tr><th>動作</th><th>效果</th></tr></thead>
+<tbody>
+<tr><td><code>GET /status</code></td><td>§15 十題的本地答案</td></tr>
+<tr><td><code>retry &lt;identity&gt; &lt;target&gt;</code></td><td>RETRY_WAIT → next_attempt_at = now</td></tr>
+<tr><td><code>release &lt;identity&gt; &lt;target&gt;</code></td><td>QUARANTINED → PENDING，attempts 清零，重走完整驗證；不解除 pause，resume 另做（D55 修 2）</td></tr>
+<tr><td><code>evict --target &lt;node&gt; &lt;identity&gt;</code></td><td>刪 Target 正式路徑不符檔（release 前用）</td></tr>
+<tr><td><code>pause &lt;target&gt;</code> / <code>resume &lt;target&gt;</code></td><td><code>target_control.paused</code> 翻 flag，<code>/pending</code> 過濾；顯示為 BLOCKED{paused}</td></tr>
+<tr><td><code>reconcile</code></td><td>立即觸發 Shallow check</td></tr>
+<tr><td><code>rebuild</code></td><td>D29 修 2 / 修 3：隔離（Node 間端點全 503、停排程、等回寫工作結束、旗標持久化）→ 換 incarnation → 只補不刪：全掃補建缺列、PENDING epoch 重設 1、對帳 ② 條件更新匯入 Target <code>/received</code> 歷史證據（游標重設 0）、依 D49 ② 補缺的 received；一切既有列與歷史、audit、控制旗標保留；crash 後重啟自動重做</td></tr>
+<tr><td><code>config</code></td><td>檢視 active / lkg / candidate（第 4 章）</td></tr>
+</tbody></table></div>
+<p class="prose">不提供 force-complete。CLI 包以上，並可扇出所有 Node。</p>
+<p class="prose"><strong>Operational policy 可調項</strong>（D30）：掃描間隔、輪詢間隔、<code>/pending</code> limit、傳輸 timeout、Target 並發與速率、<code>/file</code> 並發連線、UNREACHABLE 週期、對帳週期與 D 天、退避上限、Abandoned TTL、宣告年齡上限 N（7 天）、遲到發布停跑容忍（19 天）、清道夫排程、容量門檻、告警門檻、HTTP token。</p>
+
+<h2 id="s9"><span class="num">9</span>Observability</h2>
+<p class="prose">見 docs/design/monitoring.md：五軸（Completeness、Freshness、Integrity、Availability、Trust of view）× 三層（告警、診斷、趨勢），每軸第一層一個告警指標，門檻見 D33 與 D33 修。粒度 <code>{source,target}</code> 或 <code>{node}</code>，Grafana 做 overall → by phase 下鑽（D27）。</p>
+
+<h2 id="s10"><span class="num">10</span>SLO 建議值（填 §18 TBD）</h2>
+<div class="tbl wrap"><table>
+<thead><tr><th>項目</th><th>建議</th><th>依據</th></tr></thead>
+<tbody>
+<tr><td>Normal replication lag</td><td>P95 ≤ 30 s、P99 ≤ 60 s</td><td>掃描 10 s + 目錄 cache + 輪詢 5 s + MB 級傳輸（D6、D30）</td></tr>
+<tr><td>Recovery</td><td>24 h 停機後 24 h 內追平（待驗證目標，D52）</td><td class="ref">D31</td></tr>
+<tr><td>Shallow check 週期</td><td>6 h</td><td class="ref">D30</td></tr>
+<tr><td>Deep check 完整覆蓋 = T30 偵測時限</td><td>量測後定</td><td>Target 30 天 × 9 Source × 10⁵ × MB ≈ 27 TB，20 MB/s 起點約 16 天；壓測後在提高預算與接受較長期限之間選，屆時才設告警（D52 修）</td></tr>
+<tr><td>sync 主機恢復</td><td>≤ 15 min 含值班反應</td><td class="ref">D37 修</td></tr>
+<tr><td>Unknown outcome 查證期限</td><td>服務恢復後 1 個 Shallow 週期（6 h）</td><td class="ref">D19</td></tr>
+<tr><td>遲到發布發現保證</td><td>清道夫停跑 + NAS 中斷 &lt; 19 天內，遲到的 <code>&lt;key&gt;</code> 於下一個 6 h 全掃登記</td><td class="ref">D56 ④</td></tr>
+<tr><td>Local availability / latency</td><td><strong>仍 TBD</strong>：需在目標 NAS 上量 Finalize 的基準（每筆 1 create + 1 fsync + 1 link + 1 unlink）</td><td class="ref">D3</td></tr>
+<tr><td>容量門檻</td><td>reject 10 TB、alert 20 TB</td><td class="ref">D30 修</td></tr>
+<tr><td>Measurement</td><td>Source 時鐘；統計窗 5 min，分位數按 pair</td><td class="ref">D26</td></tr>
+</tbody></table></div>
+
+<h2 id="s11"><span class="num">11</span>Requirement → Design → Test 對照</h2>
+<div class="tbl wrap"><table>
+<thead><tr><th>需求</th><th>設計</th><th>測試</th></tr></thead>
+<tbody>
+<tr><td>DG-01 Node independence</td><td>每 Node 獨立 NAS / DB / process；pull 模型；不 mount 遠端 NAS（ADR-0002, D5, D7）</td><td>T02, T03, T12, AC-NODE-01～02</td></tr>
+<tr><td>DG-02 Local-first</td><td>Finalize 只碰本地 NAS；Policy 快取 + fallback；sync service 停機不影響 Local Transaction（D3, D18, D34）</td><td>T02, T14, T23</td></tr>
+<tr><td>DG-03 Eventual consistency</td><td>義務持久於 Source；Target 自拉 catch-up；QUARANTINED 可 release（D12a, D25, D31）</td><td>T05, T16, T24, §20</td></tr>
+<tr><td>DG-04 No silent loss</td><td>manifest 為真相；Shallow + Deep；unknown 不假報；unrecoverable 告警（D1, D16, D19, D33）</td><td>T10, T11, T27, T30</td></tr>
+<tr><td>DG-05 Resilience</td><td>無狀態 process、冪等 ingest / pull / report、LKG（D3a, D10, D12, D17, D34）</td><td>T06, T07, T09, T26, T32</td></tr>
+<tr><td>SR-01</td><td>library 契約 D23</td><td>T28, T29</td></tr>
+<tr><td>SR-02 / SR-03</td><td>hard mount、<code>lookupcache=positive</code>、每操作 thread + timeout；NFSv3 驗證項列於 D3b</td><td>T13, T25</td></tr>
+<tr><td>SR-04</td><td>三態回傳；PENDING_CONFIRMATION 重呼同序列（D3a）</td><td>T13, T29</td></tr>
+<tr><td>SR-05</td><td>有界執行器、槽位隨 syscall 釋放、滿即拒絕；不 mount 遠端 NAS（D51, ADR-0002）</td><td>T12, T25</td></tr>
+<tr><td>SR-06</td><td><code>/locate</code> 查本 Node 表 + Policy；不問遠端；不可達回 UNAVAILABLE（D15 修, D23 修）</td><td>T28</td></tr>
+<tr><td>FR-01</td><td>正式位置由 identity 決定、<code>&lt;key&gt;</code> link 原子、不覆寫；Target 副本保留 identity（D3, D48）</td><td>T20</td></tr>
+<tr><td>FR-02</td><td>manifest + link = Source Ready；rediscovery 四種組合（D3）</td><td>T18, T29</td></tr>
+<tr><td>FR-03</td><td><code>.writing</code> 非正式名；link 發布（D12, D28）</td><td>T08, T28</td></tr>
+<tr><td>FR-04</td><td>manifest tmp + link 原子宣告 + digest 比對 → CONFLICT（D3, D44）</td><td>T20</td></tr>
+<tr><td>RR-01</td><td>純掃描發現，Finalize 不等 sync（D6）</td><td>T01</td></tr>
+<tr><td>RR-02</td><td>義務在 Source DB；manifest × Policy 可重建，掃描覆蓋整個保留期（D1, D19, D29, D50）</td><td>T06, T07, T18</td></tr>
+<tr><td>RR-03</td><td>received 表 + in-flight set + link 原子 + 代次協定擋延遲回報（D12, D55）</td><td>T09, T19</td></tr>
+<tr><td>RR-04</td><td>單檔退避 ≤15 min；Target 儲存閘門擋整體故障；per-target 隔離；QUARANTINED 留原因（D12a, D43）</td><td>T12, T17</td></tr>
+<tr><td>RR-05</td><td>Target 自限並發與速率；Source 供檔預算；FIFO（D13, D30, D31, D52）</td><td>T16, T24</td></tr>
+<tr><td>RC-01</td><td>應有集合 = manifest × Policy（D10, D19 ①）</td><td>T11, T18</td></tr>
+<tr><td>RC-02</td><td>Source Shallow 含 manifest 桶枚舉 + Target Shallow 全保留期 / Deep 自查（D16 修, D19 修 2, D53）</td><td>T11, T27, T30</td></tr>
+<tr><td>RC-03</td><td>LOST / CORRUPT 自動重開；交付代次授權 rename 覆蓋；衝突 QUARANTINED（D19 修, D55）</td><td>T30</td></tr>
+<tr><td>RC-04</td><td>inspection 表（D19 ③, D24）</td><td>T27, §20</td></tr>
+<tr><td>IR-01</td><td>library streaming digest 寫入 manifest，永不重算取代；Target rebuild 亦不從檔案算基準（D4, D49）</td><td>T10, T19</td></tr>
+<tr><td>IR-02</td><td>size + digest 符合才 link 與 DONE（D12）</td><td>T10, T19</td></tr>
+<tr><td>IR-03</td><td>QUARANTINED 留 expected/observed；LOST / CORRUPT 以 event_id 寫 obligation_history 後重開，Target 端 invalid 列持久化待回報（D12a, D16 修, D54, D55）</td><td>T17, T30</td></tr>
+<tr><td>RT-01</td><td>Framework 只刪暫存 / Abandoned / Target 殘留；紅線（D35）；未完成義務不按時間刪，purge 以 identity 整組 COMPLETED 為條件（D56）</td><td>T21</td></tr>
+<tr><td>RT-02</td><td>statfs 門檻拒寫、告警；Target 閘門關閉停拉（D21, D43）</td><td>T21</td></tr>
+<tr><td>§11～13 CP / Config</td><td>git + CD、無 CP process、重啟啟用、LKG（D17, D18, D45）</td><td>T14, T15, T22, T23, T26, AC-CP, AC-CFG</td></tr>
+<tr><td>§14 states</td><td>三種持久化 + 顯示推導 §2.6（D42）</td><td>T17, T31</td></tr>
+<tr><td>§15～17 Ops</td><td><code>/status</code> 十題、ops API、audit（D20, D22, D25）</td><td>AC-CP-03, T31</td></tr>
+<tr><td>§16 metrics</td><td>monitoring.md 五軸三層（D27, D33）</td><td>§20</td></tr>
+</tbody></table></div>
+<h3 id="s11-1">情境驗證清單（T18 / T19 / T30 交錯案例，協定審查 3）</h3>
+<div class="tbl wrap"><table>
+<thead><tr><th>#</th><th>情境</th><th>預期</th><th>規則</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>DONE(e) 遺失，Shallow 同時發現 LOST</td><td>交付 e 遇 invalid 跳過；X 接受後 e+1 修復</td><td class="ref">D55 修 2</td></tr>
+<tr><td>1a</td><td>DONE(e) 延遲而非遺失，在 X 接受加代後抵達</td><td>拒絕 STALE</td><td class="ref">D55</td></tr>
+<tr><td>2</td><td>STALE{OBLIGATION_NOT_FOUND} 後 Source 補建義務</td><td>退避重送的 X 被接受、加代、修復</td><td class="ref">D54 修</td></tr>
+<tr><td>3</td><td>Shallow 與 Deep 同時讀到 valid</td><td>只有一方建立 X，另一方沿用</td><td class="ref">D54 修</td></tr>
+<tr><td>3a</td><td>事件 ACK 遺失與重送</td><td>同 X 只加代一次；舊 ACK 不清另一事件的 pending</td><td class="ref">D54, D55 修</td></tr>
+<tr><td>4</td><td>Source rebuild 期間 Target 發現異常</td><td>report 503 重送到恢復；valid 且基準一致的列由匯入或換錨完成，不讀檔；invalid 或不符走修復；舊 X 被接受多一次重交付</td><td class="ref">D29 修 2, D55 修 2</td></tr>
+<tr><td>4a</td><td>舊 <code>/received</code> 回應延遲抵達一般對帳</td><td>補帳仍查 (incarnation, epoch)，不繞過</td><td class="ref">D55 修, D29 修 2</td></tr>
+<tr><td>5</td><td>rebuild 前有 QUARANTINED 與 paused</td><td>兩者保留；release 解隔離、resume 解暫停，符合條件才收新 incarnation 工作</td><td class="ref">D29 修 2, D55 修 2</td></tr>
+<tr><td>6</td><td>舊 DONE(inc_old) 在 rebuild 後抵達</td><td>STALE，不完成</td><td class="ref">D55</td></tr>
+<tr><td>7</td><td>過期交付 e=7 在修復到 r=8 後才處理</td><td>跳過，不改列，不算衝突</td><td class="ref">D55 修 2</td></tr>
+<tr><td>8</td><td>rebuild 中 crash：旗標持久化後、補建中、部分匯入後</td><td>重啟維持封鎖重做；既有列、控制狀態與待回報事件保留</td><td class="ref">D29 修 2, D29 修 3</td></tr>
+<tr><td>9</td><td>identity 有一 Target 長期 QUARANTINED、另一 Target 已完成且過 60 天，之後 rebuild</td><td>已完成義務不復活為 PENDING，不誤報 unrecoverable</td><td class="ref">D29 修 3, D56 ②</td></tr>
+<tr><td>10</td><td>對帳 ② 讀到 valid 快照後 Source 接受 CORRUPT 加代</td><td>條件更新 epoch = 1 失敗，不補 COMPLETED</td><td class="ref">D29 修 3</td></tr>
+<tr><td>11</td><td>第 1 天 link 成功但回覆遺失，第 8 天重呼 finalize</td><td>四項比對 → rediscovery 得 SUCCESS，不回 DECLARATION_EXPIRED</td><td class="ref">D53 修</td></tr>
+<tr><td>12</td><td>寫入從第 1 天持續到第 32 天才宣告</td><td>content_path 取第 32 天小時目錄，6 h 全掃登記</td><td class="ref">D48 修</td></tr>
+<tr><td>13</td><td>宣告後 <code>.writing</code> 被清道夫刪，App 第 9 天重試</td><td>四項相同、<code>&lt;key&gt;</code> 不存在、需再次嘗試發布且超過 N → DECLARATION_EXPIRED，換 key</td><td class="ref">D53 修, D51 修 2</td></tr>
+</tbody></table></div>
+
+<h2 id="s12"><span class="num">12</span>已知未決</h2>
+<ul class="prose">
+<li>§18 Local availability / latency 數值：待目標 NAS 上量測 Finalize 基準。</li>
+<li>Alertmanager 告警規則與 Grafana 儀表板 JSON：實作階段交付。</li>
+<li>新 Node 首次初始化（人工放第一份 active.json）不在 AC-CP-02 保證內（ADR-0003）。</li>
+<li>rebuild 完成時間：由全量重建測試量測（D29 修 2）。</li>
+<li>階段結論（協定審查 3）：本輪協定分支已形成明確規則與故障驗證清單（§11），尚待實作測試確認。D56 已定案（搜尋時窗、identity 整組 purge、遲到發布預算、恢復限制）。</li>
+</ul>
+</main>
+</div>
+<script>
+(function(){
+  // §1 架構圖：點選元件 → 高亮相關連線，顯示 §1 表格對應列
+  var arch = document.getElementById('arch'), info = document.getElementById('arch-info');
+  var rows = {}; document.querySelectorAll('#comp-table tr[data-comp]').forEach(function(r){ rows[r.dataset.comp] = r; });
+  var hint = info.innerHTML;
+  function select(id){
+    arch.querySelectorAll('.comp').forEach(function(c){ c.classList.toggle('on', c.dataset.id === id); });
+    arch.querySelectorAll('.edge[data-ends]').forEach(function(e){ e.classList.toggle('dim', !!id && e.dataset.ends.split(' ').indexOf(id) < 0); });
+    arch.classList.toggle('sel', !!id);
+    Object.keys(rows).forEach(function(k){ rows[k].classList.toggle('on', k === id); });
+    var r = rows[id];
+    info.innerHTML = r ? '<strong>' + r.cells[0].innerHTML + '</strong><p>' + r.cells[1].innerHTML + '</p><p class="ref">決策：' + r.cells[2].innerHTML + '</p>' : hint;
+  }
+  arch.querySelectorAll('.comp').forEach(function(c){
+    c.addEventListener('click', function(){ select(c.classList.contains('on') ? null : c.dataset.id); });
+    c.addEventListener('keydown', function(e){ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); c.click(); } });
+  });
+  Object.keys(rows).forEach(function(k){ rows[k].addEventListener('click', function(){ select(rows[k].classList.contains('on') ? null : k); }); });
+
+  // §2.2 Finalize 步驟
+  var STEPS = [
+    {op:['open writing/HH/<key>.<uuid>.writing','DigestOutputStream · write(bytes)'],
+     cap:'beginWrite(ns, class, key)：Policy 快取查 ns / class 已登錄，否則拒絕（D18）；statfs 低於 reject 門檻，拒絕（D21）；開暫存檔，邊寫邊算 digest（D3 ①, D4）。writing dir = 當下小時目錄，只放暫存，不是正式位置（D48 修）。',
+     crash:'此刻 crash → F1：只有 .writing，無 manifest，超 TTL 由清道夫當 Abandoned 刪除；Application 未拿到 SUCCESS 不 commit。'},
+    {op:['① fsync(.writing)',''],
+     cap:'① 把暫存內容落盤。此後檔案內容與 digest 已確定，但 NAS 上還沒有任何「宣告」。',
+     crash:'此刻 crash → F1：同上，只有 .writing。F1b：暫存檔若被清道夫依 TTL 刪掉而 link 尚未送出 → FAILURE，不因暫存檔消失推論未發布（D51 修 2）。'},
+    {op:['② write <bucket>/<key>.manifest.<uuid>.tmp','fsync'],
+     cap:'② content_path = 宣告時刻的小時目錄（確保存在）；寫 manifest tmp {identity, class, size, digest, source_ready_at, uuid, content_path, schema_version} + fsync（D48 修）。bucket = hash(key) 前 3 hex，與時間無關（D44, D48）。',
+     crash:'此刻 crash → F4：只有 tmp，manifest 不存在；NAS 上 manifest 只有「完整存在」或「不存在」兩種，tmp 殘留由清道夫刪（D44）。'},
+    {op:['② link(tmp, <key>.manifest) → unlink tmp',''],
+     cap:'② link 原子宣告 → unlink tmp。EEXIST → 讀既有 manifest：identity、class、size、digest 四項皆同 → 續行且 content_path 以既有為準；任一不同 → FAILURE(CONFLICT)（D3, D3a, D53）。續行先 rediscovery：content_path/<key> 存在且 digest 相符 → SUCCESS，不看年齡；不存在且 manifest 超過 N = 7 天 → DECLARATION_EXPIRED 換 key（D53 修）。',
+     crash:'此刻 crash → F2：manifest 有、<key> 無、.writing 有 = Writing；Application 重呼 finalize 由四項比對 → rediscovery → 依 manifest.content_path 跨目錄補 link；掃描器不代勞（D46）。'},
+    {op:['③ link(.writing, content_path/<key>)','= commit point = Source Ready'],
+     cap:'③ 跨目錄 link 到 manifest 記的位置，不是暫存目錄也不是當下小時（D48 修）。這一步就是 commit point：正式 <key> 出現 = Source Ready，義務即成立。EEXIST → 重讀 <key> 算 digest = manifest → 已完成（D44）。',
+     crash:'此刻回覆遺失 → F3：重呼 finalize，manifest EEXIST 同 digest、link EEXIST 且重讀 <key> digest 相符 → SUCCESS，不重複資料（D3a, D44）。F5b：<key> 路徑 ≠ manifest.content_path 者不算 Ready（D53）。'},
+    {op:['④ unlink .writing（與 tmp）','→ SUCCESS'],
+     cap:'④ 清理暫存；失敗不影響結果，清道夫兜底；manifest 本身永不刪（D35, D53）。sync service 的 10 s 增量掃會在下一輪把 <key> 登記為義務（2.3）。',
+     crash:'SUCCESS：Application 此時才 commit 業務交易（D8）。義務在 Source Ready 那一刻已成立；掃描漏掉或 DB 遺失都不改變義務存在的事實。', ok:true}
+  ];
+  var bar = document.getElementById('fz-bar'), fz = document.getElementById('fz');
+  function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function step(i){
+    bar.querySelectorAll('button').forEach(function(b){ b.classList.toggle('on', +b.dataset.i === i); b.setAttribute('aria-selected', +b.dataset.i === i); });
+    fz.querySelectorAll('[data-s]').forEach(function(g){ g.hidden = g.dataset.s.split(' ').indexOf(String(i)) < 0; });
+    var s = STEPS[i];
+    document.getElementById('fz-op1').textContent = s.op[0];
+    document.getElementById('fz-op2').textContent = s.op[1];
+    document.getElementById('fz-cap').textContent = s.cap;
+    var c = document.getElementById('fz-crash'); c.textContent = s.crash; c.classList.toggle('ok', !!s.ok);
+  }
+  bar.addEventListener('click', function(e){ var b = e.target.closest('button'); if (b) step(+b.dataset.i); });
+  step(0);
+
+  // §2.4 時序重播
+  var seq = document.getElementById('seq');
+  document.getElementById('seq-replay').addEventListener('click', function(){ seq.classList.add('replay'); void seq.getBoundingClientRect(); seq.classList.remove('replay'); });
+
+  // 目錄：手機收合、捲動時高亮目前章節
+  var toc = document.getElementById('toc');
+  if (window.matchMedia('(max-width: 900px)').matches) toc.open = false;
+  var links = toc.querySelectorAll('a[href^="#"]'), heads = [];
+  links.forEach(function(a){ var h = document.getElementById(a.getAttribute('href').slice(1)); if (h) heads.push([h, a]); });
+  var current = null;
+  function mark(){
+    var y = window.scrollY + 120, best = heads[0];
+    heads.forEach(function(p){ if (p[0].offsetTop <= y) best = p; });
+    if (best && best !== current) { links.forEach(function(a){ a.classList.remove('on'); }); best[1].classList.add('on'); current = best; }
+  }
+  window.addEventListener('scroll', mark, {passive:true}); mark();
+})();
+</script>
+</body>
+</html>
