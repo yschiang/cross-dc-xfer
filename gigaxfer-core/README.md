@@ -55,7 +55,7 @@ switch (r) {
 
 | 窗口 | 測試 |
 | --- | --- |
-| F1b | `FinalizeRecoveryTest.F1b_writing_file_removed_before_link_is_failure_not_pending` |
+| F1b | `FinalizeRecoveryTest.F1b_writing_file_removed_before_link_is_failure_not_pending`、`F1b_link_in_flight_then_declaration_expires_is_pending_until_link_settles`、`F1b_writing_removed_while_link_in_flight_is_pending_until_link_settles`（link-key timeout 後舊 link 仍在執行：結束前同 identity 一律 `PendingConfirmation`，不判年齡、不刪暫存） |
 | F2 | `FinalizeRecoveryTest.F2_link_not_sent_then_retry_publishes` |
 | F2b | `FinalizeRecoveryTest.F2b_retry_after_declaration_older_than_7_days_is_expired` |
 | F3 | `FinalizeRecoveryTest.F3_link_done_but_reply_lost_then_retry_is_success_without_duplicate` |

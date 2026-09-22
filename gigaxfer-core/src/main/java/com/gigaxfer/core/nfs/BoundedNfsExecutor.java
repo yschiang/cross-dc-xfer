@@ -39,8 +39,9 @@ public final class BoundedNfsExecutor implements NfsExecutor {
         try {
             return future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
-            // 刻意不 cancel：hard mount 下卡住的 thread 殺不掉，槽位只在 syscall 回來才釋放
-            throw new NfsTimeoutException(op);
+            // 刻意不 cancel：hard mount 下卡住的 thread 殺不掉，槽位只在 syscall 回來才釋放。
+            // 交出 future：呼叫端可據此保留 operation ownership，等它真正結束再下結論（SR-05）
+            throw new NfsTimeoutException(op, future);
         } catch (ExecutionException e) {
             Throwable c = e.getCause();
             if (c instanceof IOException io) throw io;
@@ -49,7 +50,7 @@ public final class BoundedNfsExecutor implements NfsExecutor {
             throw new IOException(op + " failed", c);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new NfsTimeoutException(op);
+            throw new NfsTimeoutException(op, future);
         }
     }
 

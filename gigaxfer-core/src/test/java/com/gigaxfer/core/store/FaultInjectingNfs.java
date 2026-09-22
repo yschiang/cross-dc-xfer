@@ -7,12 +7,16 @@ import com.gigaxfer.core.nfs.NfsTimeoutException;
 import java.io.IOException;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 一次性故障：dropBefore = 操作根本沒送出；dropAfter = 操作已完成但回覆遺失；
  * failBefore = 操作根本沒送出且是硬失敗（ENOSPC/EIO 之類的一般 IOException，不是 timeout）；
- * dropBeforeNth = 同名 op 的第 N 次呼叫沒送出（用來打中「逐塊」操作的中段）。
+ * dropBeforeNth = 同名 op 的第 N 次呼叫沒送出（用來打中「逐塊」操作的中段）；
+ * hang = 操作已送出但卡住（hard mount）：呼叫端立刻拿到帶著 in-flight future 的 timeout，
+ * 操作要等 release 放行後才真正執行、生效。
  */
 final class FaultInjectingNfs implements NfsExecutor {
     private final NfsExecutor inner;
@@ -21,6 +25,7 @@ final class FaultInjectingNfs implements NfsExecutor {
     private final Map<String, Boolean> hardFail = new ConcurrentHashMap<>();
     private final Map<String, Integer> beforeNth = new ConcurrentHashMap<>();
     private final Map<String, AtomicInteger> seen = new ConcurrentHashMap<>();
+    private final Map<String, CountDownLatch> hangs = new ConcurrentHashMap<>();
 
     FaultInjectingNfs(NfsExecutor inner) {
         this.inner = inner;
@@ -43,9 +48,24 @@ final class FaultInjectingNfs implements NfsExecutor {
         beforeNth.put(op, n);
     }
 
+    void hang(String op, CountDownLatch release) {
+        hangs.put(op, release);
+    }
+
     @Override
     public <T> T call(String op, IoCallable<T> body) throws NfsBusyException, NfsTimeoutException, IOException {
         if (before.remove(op) != null) throw new NfsTimeoutException(op);
+        CountDownLatch release = hangs.remove(op);
+        if (release != null) {
+            FutureTask<T> stuck = new FutureTask<>(() -> {
+                release.await();
+                return body.call();
+            });
+            Thread t = new Thread(stuck, "hung-" + op);
+            t.setDaemon(true);
+            t.start();
+            throw new NfsTimeoutException(op, stuck);
+        }
         if (hardFail.remove(op) != null) throw new IOException(op + ": EIO");
         Integer nth = beforeNth.get(op);
         if (nth != null && seen.computeIfAbsent(op, k -> new AtomicInteger()).incrementAndGet() == nth) {

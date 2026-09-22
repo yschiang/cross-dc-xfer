@@ -13,9 +13,12 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Future;
 
 /** Application 端 Storage Access contract 的核心（SR-01、D23）。 */
 public final class LocalStore {
@@ -27,6 +30,13 @@ public final class LocalStore {
     final NfsExecutor nfs;
     final Clock clock;
     final ManifestCodec codec = new ManifestCodec();
+    /**
+     * link-key timeout 後仍可能在執行的 link（D51 修 2、SR-05）。結束前同 identity 的任何 finalizeWrite
+     * 都只回 PENDING_CONFIRMATION，不判年齡、不刪暫存、不送新 link。
+     * ponytail: 以 LocalStore 實例為範圍——同一 mount 在同一 process 開多個 LocalStore 時彼此看不到；
+     * 跨 process 不需要（process 死了它的 link 也不會再生效）。
+     */
+    final Map<FileIdentity, Future<?>> linksInFlight = new ConcurrentHashMap<>();
     private final WriteGate gate;
 
     public LocalStore(String sourceNode, PathLayout layout, NfsExecutor nfs, WriteGate gate, Clock clock) {

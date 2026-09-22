@@ -17,6 +17,8 @@ import java.nio.file.attribute.FileTime;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -226,6 +228,62 @@ class FinalizeRecoveryTest {
 
         assertThat(r).isInstanceOf(FinalizeResult.Failure.class);
         assertThat(((FinalizeResult.Failure) r).reason()).isEqualTo(FailureReason.IO);
+    }
+
+    /** 重呼直到不再是 PendingConfirmation（等 in-flight 的 link 真正結束），不靠固定 sleep。 */
+    FinalizeResult finalizeUntilSettled(WriteHandle h) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        FinalizeResult r;
+        do {
+            r = h.finalizeWrite();
+            if (r instanceof FinalizeResult.PendingConfirmation) Thread.sleep(5);
+        } while (r instanceof FinalizeResult.PendingConfirmation && System.nanoTime() < deadline);
+        return r;
+    }
+
+    /**
+     * P01-06／P01-07（D51 修 2）：link-key 已送出但卡住。宣告過期後重試不得回 DECLARATION_EXPIRED、
+     * 不得刪暫存——舊 link 之後完成會讓 FAILURE 的交易變成 Source Ready。link 結束前一律 PENDING，
+     * 同 identity 的新 handle 也一樣；結束後依 NAS 上的結果判定。
+     */
+    @Test
+    void F1b_link_in_flight_then_declaration_expires_is_pending_until_link_settles() throws Exception {
+        WriteHandle h = write(content);
+        CountDownLatch release = new CountDownLatch(1);
+        nfs.hang("link-key", release);
+        FinalizeResult first = h.finalizeWrite();
+        assertThat(first).isInstanceOf(FinalizeResult.PendingConfirmation.class);
+        assertThat(((FinalizeResult.PendingConfirmation) first).op()).isEqualTo("link-key");
+
+        Files.setLastModifiedTime(layout.manifestPath(id), FileTime.from(clock.instant()));
+        clock.advance(Duration.ofDays(8));
+
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
+        assertThat(write(content).finalizeWrite()).isInstanceOf(FinalizeResult.PendingConfirmation.class); // 新 handle 同 identity
+        assertThat(h.writingPath()).exists();
+        assertThat(root.resolve(key08)).doesNotExist();
+
+        release.countDown(); // 舊 link 終於生效
+        assertThat(finalizeUntilSettled(h)).isInstanceOf(FinalizeResult.Success.class);
+        assertThat(root.resolve(key08)).hasBinaryContent(content);
+    }
+
+    /** link 在飛時清道夫刪了暫存：不得推論未發布而回 FAILURE；link 結束且確定沒生效後才 FAILURE。 */
+    @Test
+    void F1b_writing_removed_while_link_in_flight_is_pending_until_link_settles() throws Exception {
+        WriteHandle h = write(content);
+        CountDownLatch release = new CountDownLatch(1);
+        nfs.hang("link-key", release);
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
+
+        Files.delete(h.writingPath()); // 模擬清道夫依 TTL 刪除
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
+
+        release.countDown(); // 此 fake 的 link 依名字執行 → ENOENT，確定未生效
+        FinalizeResult r = finalizeUntilSettled(h);
+        assertThat(r).isInstanceOf(FinalizeResult.Failure.class);
+        assertThat(((FinalizeResult.Failure) r).reason()).isEqualTo(FailureReason.IO);
+        assertThat(root.resolve(key08)).doesNotExist();
     }
 
     @Test

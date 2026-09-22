@@ -9,6 +9,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
 class BoundedNfsExecutorTest {
 
@@ -52,6 +53,21 @@ class BoundedNfsExecutorTest {
                 }
             }
             assertThat(after).isEqualTo(7);
+        }
+    }
+
+    /** timeout 交出仍在執行的操作：呼叫端據此保留 ownership，直到 syscall 真正結束才 isDone。 */
+    @Test
+    void timeout_hands_back_the_still_running_operation() throws Exception {
+        CountDownLatch release = new CountDownLatch(1);
+        try (BoundedNfsExecutor nfs = new BoundedNfsExecutor("t", 1, Duration.ofMillis(50))) {
+            NfsTimeoutException e = catchThrowableOfType(NfsTimeoutException.class,
+                () -> nfs.call("link-key", () -> { release.await(); return null; }));
+            assertThat(e.inFlight()).isNotNull();
+            assertThat(e.inFlight().isDone()).isFalse();
+            release.countDown();
+            e.inFlight().get(1, TimeUnit.SECONDS);
+            assertThat(e.inFlight().isDone()).isTrue();
         }
     }
 
