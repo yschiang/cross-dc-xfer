@@ -77,6 +77,18 @@ class ConfigStoreTest {
     }
 
     @Test
+    void corrupt_active_does_not_overwrite_good_lkg_when_candidate_activates() throws Exception {
+        put("active.json", "{ not json");
+        put("lkg.json", withVersion(fixture(), 2));
+        put("candidate.json", withVersion(fixture(), 4));
+        ConfigActivation a = new ConfigStore(dir).load();
+        assertThat(a.source()).isEqualTo(ConfigActivation.Source.ACTIVE);
+        assertThat(a.config().version()).isEqualTo(4L);
+        assertThat(dir.resolve("candidate.json")).doesNotExist();
+        assertThat(ConfigCodec.decode(Files.readAllBytes(dir.resolve("lkg.json"))).version()).isEqualTo(2L);
+    }
+
+    @Test
     void rejects_candidate_with_non_increasing_version_and_keeps_it() throws Exception {
         put("active.json", withVersion(fixture(), 3));
         put("candidate.json", withVersion(fixture(), 3));

@@ -53,7 +53,7 @@ public final class ConfigStore {
                 } catch (InvalidConfigException e) {
                     throw new IllegalStateException("candidate validated a moment ago", e);
                 }
-                if (Files.exists(active)) {
+                if (current.isPresent()) {
                     Files.move(active, lkg, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
                 }
                 Files.move(candidate, active, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
