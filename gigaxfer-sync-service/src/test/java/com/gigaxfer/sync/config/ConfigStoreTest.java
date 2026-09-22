@@ -154,13 +154,24 @@ class ConfigStoreTest {
     }
 
     @Test
-    void first_initialisation_accepts_candidate_when_nothing_else_exists() throws Exception {
+    void candidate_alone_does_not_bypass_manual_initial_active_setup() throws Exception {
         put("candidate.json", withVersion(fixture(), 1));
-        ConfigActivation a = new ConfigStore(dir).load();
-        assertThat(a.source()).isEqualTo(ConfigActivation.Source.ACTIVE);
-        assertThat(a.config().version()).isEqualTo(1L);
-        assertThat(dir.resolve("active.json")).exists();
-        assertThat(dir.resolve("candidate.json")).doesNotExist();
+        assertThatThrownBy(() -> new ConfigStore(dir).load())
+            .isInstanceOf(ConfigUnavailableException.class);
+        assertThat(dir.resolve("active.json")).doesNotExist();
+        assertThat(dir.resolve("candidate.json")).exists();
+    }
+
+    @Test
+    void rejects_candidate_that_changes_registered_namespaces() throws Exception {
+        put("active.json", fixture());
+        put("candidate.json", withVersion(fixture(), 4).replace(
+            "\"namespaces\": [\"transactions\", \"analytics\"]",
+            "\"namespaces\": [\"transactions\"]"));
+        ConfigActivation activation = new ConfigStore(dir).load();
+        assertThat(activation.config().version()).isEqualTo(3L);
+        assertThat(activation.activationFailure()).isPresent().get().asString().contains("policy");
+        assertThat(dir.resolve("candidate.json")).exists();
     }
 
     @Test

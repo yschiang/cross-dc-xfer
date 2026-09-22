@@ -44,6 +44,10 @@ public final class ConfigStore {
         ConfigActivation.Source source = current.isPresent() ? ConfigActivation.Source.ACTIVE : ConfigActivation.Source.LKG;
         Optional<NodeConfig> baseline = current.isPresent() ? current : read(lkg);
 
+        if (baseline.isEmpty()) {
+            throw new ConfigUnavailableException("no valid active or lkg config; initialise active.json first");
+        }
+
         if (Files.exists(candidate)) {
             String reason = validateCandidate(candidate, baseline);
             if (reason == null) {
