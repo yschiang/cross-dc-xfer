@@ -27,7 +27,7 @@ import java.util.UUID;
 /**
  * 一次寫入的生命週期：Writing → Finalize → Source Ready，或 Discard。
  *
- * <p>單執行緒使用，不可跨執行緒共用：內部的 digest、size 與 poisoned 旗標都沒有同步。
+ * <p>單執行緒使用，不可跨執行緒共用：lifecycle 有同步，但 digest、size 與 MessageDigest 沒有。
  */
 public final class WriteHandle implements AutoCloseable {
     private static final int BUFFER = 64 * 1024;
@@ -186,7 +186,6 @@ public final class WriteHandle implements AutoCloseable {
             Path manifestPath = store.layout.manifestPath(id);
             Path tmp = store.layout.manifestTmpPath(id, uuid);
             Instant declaredAt = store.clock.instant();
-            Path myContentDir = store.layout.contentDir(id, dataClass, declaredAt);
             Manifest mine = new Manifest(Manifest.SCHEMA_VERSION, id.sourceNode(), id.namespace(), dataClass, id.logicalKey(),
                 size, digest, uuid.toString(), declaredAt, store.layout.expectedContentPath(id, dataClass, declaredAt));
             byte[] bytes = store.codec.encode(mine);

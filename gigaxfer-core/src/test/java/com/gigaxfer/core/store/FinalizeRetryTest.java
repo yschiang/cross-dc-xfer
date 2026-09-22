@@ -50,6 +50,23 @@ class FinalizeRetryTest {
         assertThat(root.resolve("P3/mes/metrology/2026-09-22/08/R1")).hasContent("retry");
     }
 
+    /** CONTEXT.md Discard：只允許對 Writing；Finalize 已開始（含 PendingConfirmation）後 discard 被拒且不動暫存。 */
+    @Test
+    void discard_after_finalize_started_is_rejected_and_keeps_temp() throws Exception {
+        WriteHandle h = store.beginWrite("mes", "metrology", "R2");
+        h.stream().write("keep".getBytes(StandardCharsets.UTF_8));
+        nfs.dropAfter("fsync-writing");
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(h::discard).isInstanceOf(IllegalStateException.class);
+        try (java.util.stream.Stream<Path> files = java.nio.file.Files.walk(root)) {
+            assertThat(files.filter(java.nio.file.Files::isRegularFile).map(p -> p.getFileName().toString()))
+                .anyMatch(n -> n.startsWith("R2.") && n.endsWith(".writing"));
+        }
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(h::discard).isInstanceOf(IllegalStateException.class);
+    }
+
     /** Finalize 一開始內容就凍結；fsync 結果未知時也不能再讓小寫入停在外層 buffer。 */
     @Test
     void writes_are_rejected_after_finalize_starts_even_before_digest_is_fixed() throws Exception {

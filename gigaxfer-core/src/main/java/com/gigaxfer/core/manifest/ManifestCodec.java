@@ -84,8 +84,8 @@ public final class ManifestCodec {
      * P01-03：content_path 必須是 &lt;source&gt;/&lt;ns&gt;/&lt;class&gt;/&lt;yyyy-MM-dd&gt;/&lt;HH&gt;/&lt;key&gt;，
      * 除日／小時目錄外每段都由本宣告的 identity 與 data class 決定。否則發布會被導向別的 identity 的位置。
      *
-     * <p>ponytail: 只驗日／小時「是合法的日期與小時」，不比對 source_ready_at——codec 不知道 PathLayout 的時區；
-     * 位置歸屬（不能指向別的 identity）由其餘四段保證。要比對時區再把驗證移進 PathLayout。
+     * <p>codec 只驗日／小時「是合法的日期與小時」，位置歸屬（不能指向別的 identity）由其餘四段保證；
+     * 與 source_ready_at 的時區比對在 WriteHandle.readManifest 以 PathLayout.expectedContentPath 完成。
      */
     private static void requireDerivedContentPath(Manifest m) throws MalformedManifestException {
         String[] seg = m.contentPath().split("/", -1);
