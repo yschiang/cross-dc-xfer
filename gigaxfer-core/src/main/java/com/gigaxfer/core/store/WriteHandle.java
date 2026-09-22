@@ -104,7 +104,20 @@ public final class WriteHandle implements AutoCloseable {
             // close 只是還資源，失敗無所謂，所以走 best-effort。
             if (digest == null) {
                 stream.flush();
-                store.nfs.run("fsync-writing", () -> channel.force(true));
+                // 若上一次呼叫已經 close() 過（例如 PendingConfirmation 後 Application 用了
+                // try-with-resources），channel 已關閉：重新在 writing 上開一個臨時 channel 來
+                // force。POSIX fsync 對同一 inode 的任何 descriptor 都會把資料落盤，durability
+                // 不變。writing 若已不存在，NoSuchFileException 原樣往上丟，走既有的
+                // Failure(IO) 路徑（D51 修 2：來源已不存在）。
+                store.nfs.run("fsync-writing", () -> {
+                    if (channel.isOpen()) {
+                        channel.force(true);
+                    } else {
+                        try (FileChannel c = FileChannel.open(writing, StandardOpenOption.WRITE)) {
+                            c.force(true);
+                        }
+                    }
+                });
                 digest = Sha256.format(md); // md.digest() 會重設狀態，只能呼叫一次
                 bestEffort("close-writing", channel::close);
             }
