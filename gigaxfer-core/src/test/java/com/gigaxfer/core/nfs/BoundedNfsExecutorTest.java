@@ -42,7 +42,7 @@ class BoundedNfsExecutorTest {
 
             release.countDown();
             assertThat(finished.await(1, TimeUnit.SECONDS)).isTrue();
-            // 輪詢到槽位真的可再提交為止（getActiveCount() 歸零早於 worker 回到 SynchronousQueue）
+            // 輪詢：finished 在 body 內 countDown，早於 permit 在 finally 釋放
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
             Integer after = null;
             while (after == null && System.nanoTime() < deadline) {
@@ -53,6 +53,14 @@ class BoundedNfsExecutorTest {
                 }
             }
             assertThat(after).isEqualTo(7);
+        }
+    }
+
+    /** 前一個 op 已返回，槽位就必須立刻可用：連續呼叫不得因 worker 尚未回到池中而誤判池滿。 */
+    @Test
+    void sequential_calls_on_a_single_slot_are_never_busy() throws Exception {
+        try (BoundedNfsExecutor nfs = new BoundedNfsExecutor("t", 1, Duration.ofSeconds(5))) {
+            for (int i = 0; i < 20_000; i++) assertThat(nfs.call("op", () -> 1)).isEqualTo(1);
         }
     }
 
