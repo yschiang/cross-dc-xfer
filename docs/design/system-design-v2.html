@@ -375,7 +375,7 @@ svg.sel .comp:not(.on){opacity:.45}
 </div>
 <p class="fz-cap" id="fz-cap"></p>
 <p class="fz-crash" id="fz-crash"></p>
-<figcaption>Finalize 的 commit point 是第 ③ 步的 link：正式 <code>&lt;key&gt;</code> 出現即 Source Ready。任一步 timeout → PENDING_CONFIRMATION；Application 重呼 finalize() 走同一序列（D3a, D8）。</figcaption>
+<figcaption>Finalize 的 commit point 是第 ③ 步的 link：正式 <code>&lt;key&gt;</code> 出現即 Source Ready。① 之前的 flush 屬於寫入：失敗或 timeout → handle 中毒，finalize() 直接回 FAILURE（不先回 PENDING_CONFIRMATION），App 以新 beginWrite 重來；自 ① fsync 起任一步 timeout → PENDING_CONFIRMATION，Application 重呼 finalize() 走同一序列（D3a, D8）。</figcaption>
 </figure></div>
 <div class="callout">
 <p>每個 NFS 操作交給有界執行器，槽位只在 syscall 真的回來才釋放，滿了立即拒絕（D51）。Application 拿到 SUCCESS 才 commit 業務交易（D8）。同一 identity 的正式位置由第一個宣告 manifest 的人決定，跨小時重跑仍撞 EEXIST（D48）。正式位置的小時目錄取宣告時刻，寫入橫跨多日再宣告仍落在搜尋窗內；遲到發布的邊界與預算見 D56 ④（D48 修）。</p>
