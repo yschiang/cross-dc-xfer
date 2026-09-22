@@ -86,7 +86,8 @@ finalize()
        EEXIST → 重讀 <key> 算 digest = manifest → 已完成（重試路徑的當下確認，D44）
   ④ unlink .writing 與 manifest tmp（失敗不影響結果，清道夫兜底）；manifest 本身永不刪   (D35, D53)
   → SUCCESS
-任一步 timeout → PENDING_CONFIRMATION；Application 重呼 finalize() 走同一序列   (D3a, D8)
+① 之前的 flush 屬於寫入：失敗或 timeout → handle 中毒，finalize() 直接回 FAILURE（不先回 PENDING_CONFIRMATION），App 以新 beginWrite 重來
+自 ① fsync 起任一步 timeout → PENDING_CONFIRMATION；Application 重呼 finalize() 走同一序列   (D3a, D8)
 ```
 
 每個 NFS 操作交給有界執行器，槽位只在 syscall 真的回來才釋放，滿了立即拒絕（D51）。Application 拿到 SUCCESS 才 commit 業務交易（D8）。同一 identity 的正式位置由第一個宣告 manifest 的人決定，跨小時重跑仍撞 EEXIST（D48）。正式位置的小時目錄取宣告時刻，寫入橫跨多日再宣告仍落在搜尋窗內；遲到發布的邊界與預算見 D56 ④（D48 修）。三句不變量（D46）：Source 掃描器不修改 NAS；Source 正式 `<key>` 只由 library 發布；清道夫僅依 Abandoned 規則清理暫存與未發布 metadata。

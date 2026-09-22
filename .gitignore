@@ -1,4 +1,7 @@
 .DS_Store
 .worktrees/
 .superpowers/
+target/
+*.iml
+.idea/
 .claude/scheduled_tasks.lock
