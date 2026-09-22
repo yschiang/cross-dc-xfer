@@ -124,6 +124,20 @@ class ManifestCodecTest {
         }
     }
 
+    /** manifest 是單行 JSON；超過上限就是損壞宣告，即使尾端只是空白、JSON 本身仍可解析。 */
+    @Test
+    void oversized_manifest_is_malformed_even_if_parseable() {
+        String line = new String(codec.encode(m), StandardCharsets.UTF_8);
+        byte[] big = (line.strip() + " ".repeat(ManifestCodec.MAX_BYTES) + "\n").getBytes(StandardCharsets.UTF_8);
+        assertThatThrownBy(() -> codec.decode(big)).isInstanceOf(MalformedManifestException.class);
+        assertThatThrownBy(() -> codec.read(new java.io.ByteArrayInputStream(big))).isInstanceOf(MalformedManifestException.class);
+    }
+
+    @Test
+    void read_from_stream_round_trips() throws Exception {
+        assertThat(codec.read(new java.io.ByteArrayInputStream(codec.encode(m)))).isEqualTo(m);
+    }
+
     @Test
     void same_declaration_compares_four_fields() {
         FileIdentity id = new FileIdentity("P3", "mes", "L123-R2");

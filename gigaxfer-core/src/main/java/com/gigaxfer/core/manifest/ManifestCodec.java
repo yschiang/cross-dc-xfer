@@ -10,12 +10,18 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.gigaxfer.core.identity.FileIdentity;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.DateTimeException;
 import java.time.LocalDate;
 import java.util.regex.Pattern;
 
 public final class ManifestCodec {
+    /**
+     * 單行 manifest 的上限。實際約 300 B + 各路徑片段；即使每段都接近 NAME_MAX 255 B 也不到 4 KB。
+     * 超過就是損壞宣告，讀取時也不會為它配置超過此大小的記憶體。
+     */
+    public static final int MAX_BYTES = 16 * 1024;
     private static final Pattern DIGEST_PATTERN = Pattern.compile("^sha256:[0-9a-f]{64}$");
     private static final Pattern DAY = Pattern.compile("^[0-9]{4}-[0-9]{2}-[0-9]{2}$");
     private static final Pattern HOUR = Pattern.compile("^([01][0-9]|2[0-3])$");
@@ -40,7 +46,13 @@ public final class ManifestCodec {
         }
     }
 
+    /** 有界讀取：最多讀 MAX_BYTES + 1 位元組（readNBytes 分塊配置，不依檔案大小預先配置）。 */
+    public Manifest read(InputStream in) throws IOException {
+        return decode(in.readNBytes(MAX_BYTES + 1));
+    }
+
     public Manifest decode(byte[] bytes) throws MalformedManifestException {
+        if (bytes.length > MAX_BYTES) throw new MalformedManifestException("manifest larger than " + MAX_BYTES + " bytes");
         Manifest m;
         try {
             m = mapper.readValue(bytes, Manifest.class);

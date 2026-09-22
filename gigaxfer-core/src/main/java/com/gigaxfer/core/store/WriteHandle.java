@@ -8,6 +8,7 @@ import com.gigaxfer.core.nfs.NfsException;
 import com.gigaxfer.core.nfs.NfsTimeoutException;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -152,7 +153,11 @@ public final class WriteHandle implements AutoCloseable {
                 declared = mine;
             } catch (FileAlreadyExistsException e) {
                 preexisting = true;
-                declared = store.nfs.call("read-manifest", () -> store.codec.decode(Files.readAllBytes(manifestPath)));
+                declared = store.nfs.call("read-manifest", () -> {
+                    try (InputStream in = Files.newInputStream(manifestPath)) {
+                        return store.codec.read(in); // 有上限，不整檔配置
+                    }
+                });
                 if (!declared.sameDeclaration(id, dataClass, size, digest)) {
                     cleanupTemps();
                     return new FinalizeResult.Failure(FailureReason.CONFLICT,

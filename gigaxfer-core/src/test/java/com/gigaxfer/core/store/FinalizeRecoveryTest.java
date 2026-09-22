@@ -212,6 +212,22 @@ class FinalizeRecoveryTest {
         assertThat(root.resolve(key08)).doesNotExist();
     }
 
+    /** 既有 manifest 超過上限（此例 1 MB，JSON 仍可解析）視為損壞宣告：不得回 SUCCESS。 */
+    @Test
+    void oversized_existing_manifest_is_not_a_valid_declaration() throws Exception {
+        assertThat(write(content).finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
+        byte[] line = Files.readAllBytes(layout.manifestPath(id));
+        byte[] padded = new byte[1024 * 1024];
+        java.util.Arrays.fill(padded, (byte) ' ');
+        System.arraycopy(line, 0, padded, 0, line.length - 1); // 去掉換行，尾端全是空白
+        Files.write(layout.manifestPath(id), padded);
+
+        FinalizeResult r = write(content).finalizeWrite();
+
+        assertThat(r).isInstanceOf(FinalizeResult.Failure.class);
+        assertThat(((FinalizeResult.Failure) r).reason()).isEqualTo(FailureReason.IO);
+    }
+
     @Test
     void F1b_writing_file_removed_before_link_is_failure_not_pending() throws Exception {
         WriteHandle h = write(content);
