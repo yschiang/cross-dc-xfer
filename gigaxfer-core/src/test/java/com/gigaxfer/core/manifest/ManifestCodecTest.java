@@ -103,6 +103,27 @@ class ManifestCodecTest {
         assertThatThrownBy(() -> codec.decode(s.getBytes(StandardCharsets.UTF_8))).isInstanceOf(MalformedManifestException.class);
     }
 
+    /** P01-03：content_path 只能是本宣告 identity + data class 推導出的位置，只有日／小時目錄可變。 */
+    @Test
+    void content_path_not_derived_from_identity_and_class_is_malformed() {
+        String ok = "P3/mes/metrology/2026-09-22/08/L123-R2";
+        for (String bad : new String[]{
+            "P4/mes/metrology/2026-09-22/08/L123-R2",     // 別的 source
+            "P3/other/metrology/2026-09-22/08/L123-R2",   // 別的 namespace
+            "P3/mes/other/2026-09-22/08/L123-R2",         // 別的 data class
+            "P3/mes/metrology/2026-09-22/08/OTHER",       // 別的 key
+            "P3/mes/metrology/2026-09-22/08/../L123-R2",  // 多一段
+            "P3/mes/metrology/08/L123-R2",                // 少一段
+            "P3/mes/metrology/2026-02-30/08/L123-R2",     // 不存在的日期
+            "P3/mes/metrology/2026-09-22/24/L123-R2",     // 不存在的小時
+            "P3/mes/metrology/2026-09-22/8/L123-R2",      // 小時不是兩位
+            "/P3/mes/metrology/2026-09-22/08/L123-R2",    // 絕對路徑
+        }) {
+            String s = new String(codec.encode(m), StandardCharsets.UTF_8).replace(ok, bad);
+            assertThatThrownBy(() -> codec.decode(s.getBytes(StandardCharsets.UTF_8))).as(bad).isInstanceOf(MalformedManifestException.class);
+        }
+    }
+
     @Test
     void same_declaration_compares_four_fields() {
         FileIdentity id = new FileIdentity("P3", "mes", "L123-R2");

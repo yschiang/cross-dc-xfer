@@ -11,10 +11,14 @@ import com.gigaxfer.core.identity.FileIdentity;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.time.DateTimeException;
+import java.time.LocalDate;
 import java.util.regex.Pattern;
 
 public final class ManifestCodec {
     private static final Pattern DIGEST_PATTERN = Pattern.compile("^sha256:[0-9a-f]{64}$");
+    private static final Pattern DAY = Pattern.compile("^[0-9]{4}-[0-9]{2}-[0-9]{2}$");
+    private static final Pattern HOUR = Pattern.compile("^([01][0-9]|2[0-3])$");
 
     private final ObjectMapper mapper = JsonMapper.builder()
         .addModule(new JavaTimeModule())
@@ -54,17 +58,36 @@ public final class ManifestCodec {
         if (m.size() < 0) {
             throw new MalformedManifestException("size is negative: " + m.size());
         }
-        if (m.dataClass().isEmpty()) {
-            throw new MalformedManifestException("data_class is empty");
-        }
-        if (m.contentPath().isEmpty()) {
-            throw new MalformedManifestException("content_path is empty");
-        }
         try {
             new FileIdentity(m.sourceNode(), m.namespace(), m.logicalKey());
+            FileIdentity.requireSegment(m.dataClass(), "data_class");
         } catch (IllegalArgumentException e) {
-            throw new MalformedManifestException("source_node/namespace/logical_key invalid: " + e.getMessage(), e);
+            throw new MalformedManifestException("source_node/namespace/data_class/logical_key invalid: " + e.getMessage(), e);
         }
+        requireDerivedContentPath(m);
         return m;
+    }
+
+    /**
+     * P01-03：content_path 必須是 &lt;source&gt;/&lt;ns&gt;/&lt;class&gt;/&lt;yyyy-MM-dd&gt;/&lt;HH&gt;/&lt;key&gt;，
+     * 除日／小時目錄外每段都由本宣告的 identity 與 data class 決定。否則發布會被導向別的 identity 的位置。
+     *
+     * <p>ponytail: 只驗日／小時「是合法的日期與小時」，不比對 source_ready_at——codec 不知道 PathLayout 的時區；
+     * 位置歸屬（不能指向別的 identity）由其餘四段保證。要比對時區再把驗證移進 PathLayout。
+     */
+    private static void requireDerivedContentPath(Manifest m) throws MalformedManifestException {
+        String[] seg = m.contentPath().split("/", -1);
+        boolean ok = seg.length == 6
+            && seg[0].equals(m.sourceNode()) && seg[1].equals(m.namespace()) && seg[2].equals(m.dataClass())
+            && DAY.matcher(seg[3]).matches() && HOUR.matcher(seg[4]).matches()
+            && seg[5].equals(m.logicalKey());
+        if (ok) {
+            try {
+                LocalDate.parse(seg[3]); // ISO_LOCAL_DATE 是 STRICT：2026-02-30 會被拒
+            } catch (DateTimeException e) {
+                ok = false;
+            }
+        }
+        if (!ok) throw new MalformedManifestException("content_path not derived from identity and data_class: " + m.contentPath());
     }
 }

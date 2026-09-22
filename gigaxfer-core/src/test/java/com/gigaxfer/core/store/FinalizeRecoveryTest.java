@@ -1,7 +1,9 @@
 package com.gigaxfer.core.store;
 
 import com.gigaxfer.core.identity.FileIdentity;
+import com.gigaxfer.core.digest.Sha256;
 import com.gigaxfer.core.layout.PathLayout;
+import com.gigaxfer.core.manifest.Manifest;
 import com.gigaxfer.core.nfs.BoundedNfsExecutor;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -192,6 +194,22 @@ class FinalizeRecoveryTest {
         FinalizeResult r = write(content).finalizeWrite();
         assertThat(r).isInstanceOf(FinalizeResult.Failure.class);
         assertThat(((FinalizeResult.Failure) r).reason()).isEqualTo(FailureReason.IO);
+    }
+
+    /** P01-03：既有宣告的 content_path 指向別的 identity（P4/other/...）時不得依它發布、不得回 SUCCESS。 */
+    @Test
+    void declared_content_path_of_another_identity_is_not_published() throws Exception {
+        Manifest forged = new Manifest(Manifest.SCHEMA_VERSION, "P3", "mes", "metrology", "L1", content.length,
+            Sha256.ofBytes(content), "11111111-2222-3333-4444-555555555555", clock.instant(),
+            "P4/other/metrology/2026-09-22/08/L1");
+        Files.createDirectories(layout.manifestDir(id));
+        Files.write(layout.manifestPath(id), store.codec.encode(forged));
+
+        FinalizeResult r = write(content).finalizeWrite();
+
+        assertThat(r).isNotInstanceOf(FinalizeResult.Success.class).isInstanceOf(FinalizeResult.Failure.class);
+        assertThat(root.resolve("P4")).doesNotExist();
+        assertThat(root.resolve(key08)).doesNotExist();
     }
 
     @Test
