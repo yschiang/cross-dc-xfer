@@ -1042,7 +1042,7 @@ git commit -m "feat(core): bounded NFS executor with no-queue reject and non-rel
   - `WriteRejectedException(Reason, String)`，`Reason { REJECTED, UNAVAILABLE, IO }`，`reason()`。
   - `sealed FinalizeResult`：`Success(FileIdentity identity, String contentPath)`、`Failure(FailureReason reason, String detail)`、`PendingConfirmation(String op, String detail)`；`enum FailureReason { CONFLICT, DECLARATION_EXPIRED, IO }`。
   - `new LocalStore(String sourceNode, PathLayout layout, NfsExecutor nfs, WriteGate gate, Clock clock)`；`beginWrite(String namespace, String dataClass, String logicalKey): WriteHandle throws WriteRejectedException`；`LocalStore.DECLARATION_MAX_AGE = Duration.ofDays(7)`。
-  - `WriteHandle`：`identity(): FileIdentity`、`stream(): OutputStream`、`writingPath(): Path`、`discard()`、`finalize(): FinalizeResult`（Task 8）、`close()` 只關通道不刪檔。
+  - `WriteHandle`：`identity(): FileIdentity`、`stream(): OutputStream`、`writingPath(): Path`、`discard()`、`finalizeWrite(): FinalizeResult`（Task 8）、`close()` 只關通道不刪檔。
 
 - [ ] **Step 1: 寫測試用 MutableClock**
 
@@ -1385,7 +1385,7 @@ public final class WriteHandle implements AutoCloseable {
         }
     }
 
-    public FinalizeResult finalize() {
+    public FinalizeResult finalizeWrite() {
         throw new UnsupportedOperationException("Task 8");
     }
 
@@ -1445,12 +1445,12 @@ git commit -m "feat(core): LocalStore.beginWrite, streaming write and discard"
 ### Task 8: Finalize 正常路徑（①②③④）
 
 **Files:**
-- Modify: `gigaxfer-core/src/main/java/com/gigaxfer/core/store/WriteHandle.java`（取代 `finalize()` 與補 private 方法）
+- Modify: `gigaxfer-core/src/main/java/com/gigaxfer/core/store/WriteHandle.java`（取代 `finalizeWrite()` 與補 private 方法）
 - Test: `gigaxfer-core/src/test/java/com/gigaxfer/core/store/FinalizeHappyPathTest.java`
 
 **Interfaces:**
 - Consumes: Task 7 的 `WriteHandle` 內部欄位、`ManifestCodec`、`Manifest`、`PathLayout`、`Sha256.ofFile`。
-- Produces: `WriteHandle.finalize(): FinalizeResult`，Success 時 `contentPath` = manifest 的 `content_path`。
+- Produces: `WriteHandle.finalizeWrite(): FinalizeResult`，Success 時 `contentPath` = manifest 的 `content_path`。
 
 - [ ] **Step 1: 寫失敗測試**
 
@@ -1504,7 +1504,7 @@ class FinalizeHappyPathTest {
         WriteHandle h = store.beginWrite("mes", "metrology", "L123-R2");
         h.stream().write(content);
 
-        FinalizeResult r = h.finalize();
+        FinalizeResult r = h.finalizeWrite();
 
         assertThat(r).isInstanceOf(FinalizeResult.Success.class);
         FinalizeResult.Success s = (FinalizeResult.Success) r;
@@ -1533,7 +1533,7 @@ class FinalizeHappyPathTest {
     @Test
     void empty_file_is_a_valid_ready_file() throws Exception {
         WriteHandle h = store.beginWrite("mes", "metrology", "EMPTY");
-        assertThat(h.finalize()).isInstanceOf(FinalizeResult.Success.class);
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
         assertThat(root.resolve("P3/mes/metrology/2026-09-22/08/EMPTY")).exists().isEmptyFile();
     }
 
@@ -1543,7 +1543,7 @@ class FinalizeHappyPathTest {
         for (int i = 0; i < chunk.length; i++) chunk[i] = (byte) i;
         WriteHandle h = store.beginWrite("mes", "metrology", "BIG");
         for (int i = 0; i < 8; i++) h.stream().write(chunk);
-        FinalizeResult r = h.finalize();
+        FinalizeResult r = h.finalizeWrite();
         assertThat(r).isInstanceOf(FinalizeResult.Success.class);
         Path key = root.resolve("P3/mes/metrology/2026-09-22/08/BIG");
         assertThat(Files.size(key)).isEqualTo(8L << 20);
@@ -1555,8 +1555,8 @@ class FinalizeHappyPathTest {
     void finalize_twice_on_same_handle_is_idempotent_success() throws Exception {
         WriteHandle h = store.beginWrite("mes", "metrology", "L123-R2");
         h.stream().write("x".getBytes(StandardCharsets.UTF_8));
-        assertThat(h.finalize()).isInstanceOf(FinalizeResult.Success.class);
-        assertThat(h.finalize()).isInstanceOf(FinalizeResult.Success.class);
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
         assertThat(root.resolve("P3/mes/metrology/2026-09-22/08/L123-R2")).hasContent("x");
     }
 }
@@ -1569,7 +1569,7 @@ Expected: FAIL，`UnsupportedOperationException: Task 8`。
 
 - [ ] **Step 3: 實作 finalize**
 
-把 `WriteHandle` 的 `finalize()` 換成以下，並加上兩個 private 方法與 import（`Manifest`、`MalformedManifestException`、`Instant`、`Duration`、`StandardOpenOption`、`FileAlreadyExistsException`、`NoSuchFileException`）：
+把 `WriteHandle` 的 `finalizeWrite()` 換成以下，並加上兩個 private 方法與 import（`Manifest`、`MalformedManifestException`、`Instant`、`Duration`、`StandardOpenOption`、`FileAlreadyExistsException`、`NoSuchFileException`）：
 
 ```java
     /**
@@ -1581,7 +1581,7 @@ Expected: FAIL，`UnsupportedOperationException: Task 8`。
      * ④ best-effort 清暫存
      * 任一步 timeout / pool 滿 → PENDING_CONFIRMATION；重呼走同一序列。
      */
-    public FinalizeResult finalize() {
+    public FinalizeResult finalizeWrite() {
         if (discarded) return new FinalizeResult.Failure(FailureReason.IO, "handle discarded");
         try {
             // ①
@@ -1692,7 +1692,7 @@ Expected: FAIL，`UnsupportedOperationException: Task 8`。
     }
 ```
 
-同時把 `finalize()` 內用到的 `stream.flush()` 改為可重入：`BufferedOutputStream.flush()` 已關通道時會丟 `ClosedChannelException`，因此在 `digest != null` 分支不呼叫 flush（上面程式碼已如此安排）。
+同時把 `finalizeWrite()` 內用到的 `stream.flush()` 改為可重入：`BufferedOutputStream.flush()` 已關通道時會丟 `ClosedChannelException`，因此在 `digest != null` 分支不呼叫 flush（上面程式碼已如此安排）。
 
 - [ ] **Step 4: 跑測試確認通過**
 
@@ -1720,7 +1720,7 @@ git commit -m "feat(core): Finalize protocol — tmp+link manifest, cross-dir li
 - Test: `gigaxfer-core/src/test/java/com/gigaxfer/core/store/FinalizeRecoveryTest.java`
 
 **Interfaces:**
-- Consumes: `NfsExecutor`（裝飾）、Task 8 的 `finalize()`。
+- Consumes: `NfsExecutor`（裝飾）、Task 8 的 `finalizeWrite()`。
 - Produces: 無新 production code；若測試揭露缺陷，修 `WriteHandle`。
 
 - [ ] **Step 1: 寫故障注入裝飾器**
@@ -1833,14 +1833,14 @@ class FinalizeRecoveryTest {
     void F2_link_not_sent_then_retry_publishes() throws Exception {
         WriteHandle h = write(content);
         nfs.dropBefore("link-key");
-        FinalizeResult first = h.finalize();
+        FinalizeResult first = h.finalizeWrite();
         assertThat(first).isInstanceOf(FinalizeResult.PendingConfirmation.class);
         assertThat(((FinalizeResult.PendingConfirmation) first).op()).isEqualTo("link-key");
         assertThat(layout.manifestPath(id)).exists();
         assertThat(root.resolve(key08)).doesNotExist();
         assertThat(h.writingPath()).exists();
 
-        assertThat(h.finalize()).isInstanceOf(FinalizeResult.Success.class);
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
         assertThat(root.resolve(key08)).hasBinaryContent(content);
         assertThat(h.writingPath()).doesNotExist();
     }
@@ -1849,10 +1849,10 @@ class FinalizeRecoveryTest {
     void F3_link_done_but_reply_lost_then_retry_is_success_without_duplicate() throws Exception {
         WriteHandle h = write(content);
         nfs.dropAfter("link-key");
-        assertThat(h.finalize()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
         assertThat(root.resolve(key08)).hasBinaryContent(content);
 
-        assertThat(h.finalize()).isInstanceOf(FinalizeResult.Success.class);
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
         assertThat(regularFiles()).isEqualTo(2); // <key> + manifest，無殘留
     }
 
@@ -1860,9 +1860,9 @@ class FinalizeRecoveryTest {
     void manifest_link_reply_lost_then_retry_continues_with_same_declaration() throws Exception {
         WriteHandle h = write(content);
         nfs.dropAfter("link-manifest");
-        assertThat(h.finalize()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
         clock.advance(Duration.ofHours(3)); // 重試落在不同小時，content_path 仍以第一次宣告為準（D48 修）
-        FinalizeResult r = h.finalize();
+        FinalizeResult r = h.finalizeWrite();
         assertThat(r).isInstanceOf(FinalizeResult.Success.class);
         assertThat(((FinalizeResult.Success) r).contentPath()).isEqualTo(key08.toString());
         assertThat(root.resolve(key08)).hasBinaryContent(content);
@@ -1871,9 +1871,9 @@ class FinalizeRecoveryTest {
 
     @Test
     void F5_same_identity_different_content_is_conflict_and_leaves_original() throws Exception {
-        assertThat(write(content).finalize()).isInstanceOf(FinalizeResult.Success.class);
+        assertThat(write(content).finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
         WriteHandle h2 = write("different".getBytes(StandardCharsets.UTF_8));
-        FinalizeResult r = h2.finalize();
+        FinalizeResult r = h2.finalizeWrite();
         assertThat(r).isInstanceOf(FinalizeResult.Failure.class);
         assertThat(((FinalizeResult.Failure) r).reason()).isEqualTo(FailureReason.CONFLICT);
         assertThat(root.resolve(key08)).hasBinaryContent(content);
@@ -1883,10 +1883,10 @@ class FinalizeRecoveryTest {
 
     @Test
     void same_identity_same_content_from_new_handle_next_day_is_idempotent_success() throws Exception {
-        assertThat(write(content).finalize()).isInstanceOf(FinalizeResult.Success.class);
+        assertThat(write(content).finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
         clock.advance(Duration.ofDays(1));
         WriteHandle h2 = write(content);
-        FinalizeResult r = h2.finalize();
+        FinalizeResult r = h2.finalizeWrite();
         assertThat(r).isInstanceOf(FinalizeResult.Success.class);
         assertThat(((FinalizeResult.Success) r).contentPath()).isEqualTo(key08.toString());
         assertThat(h2.writingPath()).doesNotExist();
@@ -1897,13 +1897,13 @@ class FinalizeRecoveryTest {
     void F2b_retry_after_declaration_older_than_7_days_is_expired() throws Exception {
         WriteHandle h = write(content);
         nfs.dropBefore("link-key");
-        assertThat(h.finalize()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
 
         Instant declared = clock.instant();
         Files.setLastModifiedTime(layout.manifestPath(id), FileTime.from(declared));
         clock.advance(Duration.ofDays(8));
 
-        FinalizeResult r = h.finalize();
+        FinalizeResult r = h.finalizeWrite();
         assertThat(r).isInstanceOf(FinalizeResult.Failure.class);
         assertThat(((FinalizeResult.Failure) r).reason()).isEqualTo(FailureReason.DECLARATION_EXPIRED);
         assertThat(root.resolve(key08)).doesNotExist();
@@ -1914,17 +1914,17 @@ class FinalizeRecoveryTest {
     void scenario_11_published_day_1_retry_day_8_is_success_not_expired() throws Exception {
         WriteHandle h = write(content);
         nfs.dropAfter("link-key");
-        assertThat(h.finalize()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
         Files.setLastModifiedTime(layout.manifestPath(id), FileTime.from(clock.instant()));
         clock.advance(Duration.ofDays(8));
-        assertThat(h.finalize()).isInstanceOf(FinalizeResult.Success.class);
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
     }
 
     @Test
     void F5b_published_file_corrupted_then_same_content_retry_is_conflict() throws Exception {
-        assertThat(write(content).finalize()).isInstanceOf(FinalizeResult.Success.class);
+        assertThat(write(content).finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
         Files.write(root.resolve(key08), "corrupt".getBytes(StandardCharsets.UTF_8));
-        FinalizeResult r = write(content).finalize();
+        FinalizeResult r = write(content).finalizeWrite();
         assertThat(r).isInstanceOf(FinalizeResult.Failure.class);
         assertThat(((FinalizeResult.Failure) r).reason()).isEqualTo(FailureReason.CONFLICT);
     }
@@ -1933,9 +1933,9 @@ class FinalizeRecoveryTest {
     void F1b_writing_file_removed_before_link_is_failure_not_pending() throws Exception {
         WriteHandle h = write(content);
         nfs.dropBefore("link-key");
-        assertThat(h.finalize()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
         Files.delete(h.writingPath()); // 模擬清道夫依 TTL 刪除
-        FinalizeResult r = h.finalize();
+        FinalizeResult r = h.finalizeWrite();
         assertThat(r).isInstanceOf(FinalizeResult.Failure.class);
         assertThat(((FinalizeResult.Failure) r).reason()).isEqualTo(FailureReason.IO);
         assertThat(root.resolve(key08)).doesNotExist();
@@ -1945,10 +1945,10 @@ class FinalizeRecoveryTest {
     void F4_half_written_tmp_from_previous_attempt_is_replaced_not_linked() throws Exception {
         WriteHandle h = write(content);
         nfs.dropAfter("write-manifest-tmp");
-        assertThat(h.finalize()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
         Path tmp = layout.manifestTmpPath(id, h.uuid());
         Files.write(tmp, "{\"schema_version\":1,\"sou".getBytes(StandardCharsets.UTF_8)); // 半截
-        assertThat(h.finalize()).isInstanceOf(FinalizeResult.Success.class);
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
         assertThat(store.codec.decode(Files.readAllBytes(layout.manifestPath(id))).digest())
             .isEqualTo(com.gigaxfer.core.digest.Sha256.ofBytes(content));
     }
@@ -1958,7 +1958,7 @@ class FinalizeRecoveryTest {
 - [ ] **Step 3: 跑測試**
 
 Run: `mvn -q -pl gigaxfer-core test -Dtest=FinalizeRecoveryTest`
-Expected: 全部通過。若任一失敗，缺陷在 `WriteHandle.finalize()`，依失敗訊息修正後重跑；不得修改測試的預期。
+Expected: 全部通過。若任一失敗，缺陷在 `WriteHandle.finalizeWrite()`，依失敗訊息修正後重跑；不得修改測試的預期。
 
 - [ ] **Step 4: Commit**
 
@@ -2049,12 +2049,12 @@ class FinalizeUnderPressureTest {
             WriteHandle h = store.beginWrite("mes", "metrology", "L1");
             h.stream().write("v".getBytes(StandardCharsets.UTF_8));
             CountDownLatch release = occupy(nfs);
-            FinalizeResult r = h.finalize();
+            FinalizeResult r = h.finalizeWrite();
             assertThat(r).isInstanceOf(FinalizeResult.PendingConfirmation.class);
             assertThat(((FinalizeResult.PendingConfirmation) r).op()).isEqualTo("fsync-writing");
             release.countDown();
             Thread.sleep(50);
-            assertThat(h.finalize()).isInstanceOf(FinalizeResult.Success.class);
+            assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
             assertThat(root.resolve("P3/mes/metrology/2026-09-22/08/L1")).hasContent("v");
         }
     }
@@ -2098,19 +2098,19 @@ LocalStore store = new LocalStore("P3", new PathLayout(mountRoot, ZoneId.systemD
 
 WriteHandle h = store.beginWrite("mes", "metrology", "L123-R2");   // 可丟 WriteRejectedException / IllegalArgumentException
 h.stream().write(bytes);                                          // 可丟 IOException（NFS 池滿或寫入失敗）→ 視為本次交易失敗
-FinalizeResult r = h.finalize();
+FinalizeResult r = h.finalizeWrite();
 switch (r) {
     case FinalizeResult.Success s -> commitBusinessTransaction(s.identity());   // 只有這裡可以 commit
-    case FinalizeResult.PendingConfirmation p -> retryLater(h);                // 不 commit；重呼 h.finalize() 直到確定
+    case FinalizeResult.PendingConfirmation p -> retryLater(h);                // 不 commit；重呼 h.finalizeWrite() 直到確定
     case FinalizeResult.Failure f -> failTransaction(f.reason(), f.detail());   // CONFLICT / DECLARATION_EXPIRED → 換 Logical key
 }
 ```
 
 規則：
 1. Logical key 對不同內容唯一（含 run id / timestamp）；不得以 `.writing`、`.tmp` 結尾或含 `.manifest`。
-2. `finalize()` 回 `Success` 才 commit 業務交易；`PendingConfirmation` 重呼同一 handle 的 `finalize()`；`Failure` 視為交易失敗。
+2. `finalizeWrite()` 回 `Success` 才 commit 業務交易；`PendingConfirmation` 重呼同一 handle 的 `finalizeWrite()`；`Failure` 視為交易失敗。
 3. 交易重跑直接 `beginWrite` + `finalize`，冪等保證不重複；不需先查。
-4. `discard()` 只允許在 `finalize()` 之前。
+4. `discard()` 只允許在 `finalizeWrite()` 之前。
 5. `close()` 只關通道、不刪檔；`PendingConfirmation` 後不要 `close()` 再重試（通道已由 ① 關閉則無影響）。
 6. 暫存寫入超過 24 h 未 Finalize 可能被清道夫中止；宣告後超過 7 天未發布的 key 不可再發布（`DECLARATION_EXPIRED`）。
 
