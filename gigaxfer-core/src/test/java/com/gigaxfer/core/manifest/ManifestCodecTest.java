@@ -51,6 +51,31 @@ class ManifestCodecTest {
     }
 
     @Test
+    void bad_digest_is_malformed() {
+        String s = new String(codec.encode(m), StandardCharsets.UTF_8)
+            .replace("\"digest\":\"sha256:" + "ab".repeat(32) + "\"", "\"digest\":\"not-a-digest\"");
+        assertThatThrownBy(() -> codec.decode(s.getBytes(StandardCharsets.UTF_8))).isInstanceOf(MalformedManifestException.class);
+    }
+
+    @Test
+    void negative_size_is_malformed() {
+        String s = new String(codec.encode(m), StandardCharsets.UTF_8).replace("\"size\":1048576", "\"size\":-1");
+        assertThatThrownBy(() -> codec.decode(s.getBytes(StandardCharsets.UTF_8))).isInstanceOf(MalformedManifestException.class);
+    }
+
+    @Test
+    void logical_key_with_slash_is_malformed() {
+        String s = new String(codec.encode(m), StandardCharsets.UTF_8).replace("\"logical_key\":\"L123-R2\"", "\"logical_key\":\"a/b\"");
+        assertThatThrownBy(() -> codec.decode(s.getBytes(StandardCharsets.UTF_8))).isInstanceOf(MalformedManifestException.class);
+    }
+
+    @Test
+    void empty_data_class_is_malformed() {
+        String s = new String(codec.encode(m), StandardCharsets.UTF_8).replace("\"data_class\":\"metrology\"", "\"data_class\":\"\"");
+        assertThatThrownBy(() -> codec.decode(s.getBytes(StandardCharsets.UTF_8))).isInstanceOf(MalformedManifestException.class);
+    }
+
+    @Test
     void same_declaration_compares_four_fields() {
         FileIdentity id = new FileIdentity("P3", "mes", "L123-R2");
         assertThat(m.sameDeclaration(id, "metrology", 1048576L, m.digest())).isTrue();

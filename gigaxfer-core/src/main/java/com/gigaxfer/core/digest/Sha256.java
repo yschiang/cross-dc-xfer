@@ -39,7 +39,7 @@ public final class Sha256 {
         byte[] buf = new byte[BUFFER];
         try (InputStream in = Files.newInputStream(path)) {
             int n;
-            while ((n = in.read(buf)) > 0) md.update(buf, 0, n);
+            while ((n = in.read(buf)) != -1) md.update(buf, 0, n);
         }
         return format(md);
     }
