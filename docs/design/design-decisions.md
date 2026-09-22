@@ -51,7 +51,7 @@
 | D36 | 增量掃描比對用 JVM 記憶體的已知 key 集合：`Map<hourDir, Set<key>>`，只有集合中沒有的 key 才查 DB 走冪等 ingest；時窗滑動整桶丟棄。啟動時一句查詢載入最近 3 小時的 key（約 1.3 萬筆）。真相仍在 DB，集合純為衍生快取 | D10, D26, D34 |
 | D2 修 | 路徑第一段加 `<source node>`：`<source node>/<namespace>/<data class>/<yyyy-mm-dd>/<HH>/<key>`，Source 自己也寫自己的 node 名，兩端路徑完全一致。理由：Namespace 每 Application 一個，同一 Application 跑在多個 Phase 時同 key 會在 Target 撞路徑；identity 三元組完整映射到路徑後 rediscovery 與直接讀路徑都不用猜 | FR-01, FR-04, D3, D28 |
 | D20 修 | 全域視圖 = Grafana（Prometheus 抓各 Node）；§15 十題的驗收與 Prometheus 不可用時 = CLI 扇出 `GET /status`。CLI 為動作入口與驗收基準，因其不依賴 Prometheus（AC-CP-03） | §15, AC-CP-03, D27 |
-| D23 修 | Application 整合契約新增：Application 必須開 Actuator `/actuator/prometheus` 供抓取，library 指標帶 `{node, app_instance}`；這是 DG-02 唯一的量測來源。library 設定新增 Policy fallback 檔路徑（預設 `<app data dir>/gigaxfer-policy.json`） | DG-02, D18, D27 |
+| D23 修 | Application 整合契約新增：Application 必須開 Actuator `/actuator/prometheus` 供抓取，library 指標帶 `{node, app_instance}`；這是 DG-02 唯一的量測來源。library 設定新增 Policy fallback 檔路徑（預設 `<app data dir>/file-sync-policy.json`） | DG-02, D18, D27 |
 | D27 修 | Prometheus 與 Grafana 放公司現有監控基礎設施，每套部署一組；資料保留 90 天；告警規則進 repo 由 Alertmanager 評估；Alertmanager watchdog（永遠 firing）送既有 NMS 作死人開關，NMS 另收事故級告警。Trust 軸告警只用 `up{node}`，不用 `absent()`（新 Node 無義務時會誤報） | §11, D27, D33 |
 | D30 修 | UNREACHABLE 改為連續 12 個輪詢間隔（60 s）無 pending，避開 D34 重啟預算。Source 端 `/file` 最大並發連線 16（Tomcat 設定，超過者在 accept queue 排隊，Target 只看到慢不收錯誤，不違反 D12a 不做流控），為 operational policy。容量門檻預設 reject 10 TB、alert 20 TB，NAS 容量遠大於此，本版不做容量規劃 | D12a, D21, D31, D34 |
 | D33 修 | ops 下 pause(B) 時該 Target 的義務帶 `paused` 標籤；警告級告警（age > 2 h、unknown 持續）排除 paused pair，事故級（age > 12 h、integrity > 0）永不排除。計畫性 PM 前 ops 必須下 pause 才不吵，與 D22 一致 | DG-04, D22, D33 |

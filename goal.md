@@ -1,16 +1,24 @@
 # goal.md — 夜間自主迴圈的任務書
 
-> 讀者：在 `/loop` 裡接手的 Claude。使用者已就寢，**不會回答任何問題**；本檔已預先裁定所有需要人決定的事。遇到本檔未涵蓋的抉擇：依 `docs/spec.md` → `docs/design/system-design.md` → 計畫檔的順序裁定，寫進 ledger 的 `Ruling:` 行，繼續做。只有四種情況停下（見「停止條件」）。
+> 讀者：在 `/loop` 裡接手的 Claude。使用者已就寢，**不會回答任何問題**；本檔已預先裁定所有需要人決定的事。遇到本檔未涵蓋的抉擇：依 `docs/spec.md` → `docs/design/system-design.md` → 計畫檔的順序裁定，寫進 ledger 的 `Ruling:` 行，繼續做。停止條件見下文。
+
+## 今晚交付目標
+
+完成 **P01 → P02 → P03**，驗證 M1 的 Source 路徑：App Finalize 發布 → sync service 掃描 → identity 與全部 Required target 義務可靠入庫。交付留在工作分支，供早晨 review 與驗收。
+
+本夜不宣稱完成整個 M1：跨 Node 交付仍需 P04／P05，library 整合需 P10，生命週期與完整驗收另含 P09／P13／P14。P13 腳本列為餘裕項，不排在 P03 前面。
 
 ## 目標（依優先序，做完一項才做下一項）
 
-1. **完成 P01**：依 `docs/superpowers/plans/P01-core-finalize.md` 的 11 個 task，用 `superpowers:subagent-driven-development` 逐 task 派 subagent 實作 + 審查，全部 `mvn -q -pl gigaxfer-core test` 綠燈，最後做 whole-branch review。成果留在 branch `p01-core-finalize`（worktree），**不 merge、不 push**。
-2. **寫 P02 任務書**：`docs/superpowers/plans/P02-sync-service-skeleton.md`，用 `superpowers:writing-plans` 的格式（每步附完整程式碼與測試），範圍見 `docs/superpowers/plans/P00-roadmap.md` 的 P02 列；依據 D17、D45、D30 修 5/6、D24 修、D14 修 2、D34、D34 修。Config 資料模型放在 sync-service 模組內。
-3. **實作 P02**：同第 1 項流程，branch `p02-sync-service-skeleton`，從 `p01-core-finalize` 分出。
-4. **寫 P13 任務書**：`P13-nfs-acceptance.md`，純 shell 腳本（不需要 NAS 才能寫，但**不要執行**在任何真實 NAS 上）。
-5. 時間還有就寫 P03 任務書。
+1. **確認並完成 P01**：讀 `p01-core-finalize` 的計畫、ledger、測試與 whole-branch review 結果；已完成且證據對應目前 commit 的部分直接沿用，只補剩餘工作。需要實作時用 `superpowers:subagent-driven-development`。成果留在原 worktree，**不 merge、不 push**。
+2. **確認並完成 P02**：優先續用 `p02-sync-service-skeleton` 分支上的 `docs/superpowers/plans/P02-sync-service-skeleton.md` 與進度；缺 plan 才用 `superpowers:writing-plans` 補齊。範圍依 P00 的 P02 列，依據 D17、D45、D30 修 5/6、D24 修、D14 修 2、D34、D34 修。Config 資料模型放在 core（ticket #1、P00 模組表）。依 ticket https://github.com/yschiang/cross-dc-xfer/issues/1 的 12 項驗收條件與 plan 的「修正 tasks」節續行（1R → 2R → 3R → 4 → 5 → 6 → 7）；完成實作、測試、整分支審查與 `docs/validation/P02-validation.md`，AC 逐項有證據才算 P02 通過。
+3. **（P02 驗收通過後才開始）寫 P03 plan 並完成實作**：在 `p03-ingest` branch／worktree 工作，基於已通過檢查的 P02 commit；已有該分支則先查狀態並續行。計畫存 `docs/superpowers/plans/P03-ingest.md`，完整範圍依 P00 的 P03 列與 D6、D10 修、D36、D50、D53、D56 ③。完成掃描、原子 ingest、全量對帳與補缺列，再做整分支審查。
+4. **驗證 P01–P03 整合路徑**：以本機測試環境串起真實 Finalize 產物、掃描與測試 DB。驗證 identity 與全部義務同交易、commit 後才更新快取；失敗回滾後重掃可補回、重掃不重複建列、既有 identity 缺義務能補齊。所用 DB／檔案系統與尚未做的 Oracle／NAS 驗收須列在報告。
+5. **有餘裕才寫 P13 任務書／驗收腳本**：不得延誤 P03 與整合測試；**不執行**任何真實 NAS 操作。
 
-每完成一項，更新 `docs/superpowers/plans/overnight-report.md`（見「早晨報告」）。
+每完成一項，更新 `docs/reports/overnight-report.md`（見「早晨報告」）。
+
+開始前讀 `git worktree list`、各分支的 `git status`／`git log` 與 ledger；plan 可能只存在工作分支，不能因 main 沒有檔案就重建。已有成果不覆蓋、不重做。測試模組名稱依各分支 `pom.xml`，不因文件名稱調整而改專案命名。
 
 ## 環境事實與修法（第一輪先做）
 
@@ -49,23 +57,24 @@
 - 等 subagent 時用 `ScheduleWakeup` 排 20–30 分鐘的 fallback；有結果就繼續，不要短間隔輪詢。
 - 每個 task 審查後才算完成；fix loop 最多 5 輪，到頂就裁定並記 ledger。
 
-## 停止條件（只有這四種才停，停了就寫早晨報告然後 `ScheduleWakeup stop`）
+## 停止條件（停下時寫早晨報告，再停止本任務的 loop）
 
 1. 需要 sudo、需要碰真實 NAS、或需要網路以外的外部資源。
 2. 任何 push、merge 到 main、刪除非本迴圈建立的檔案。
 3. 安全敏感的動作（憑證、token、系統設定）。
 4. 計畫壞到每條路都是猜——先試著用設計文件裁定，真的不行才停。
+5. P01–P03 與整合驗證已完成，餘裕項已處理或明確列為 deferred；寫好 review 交接後停止，不自動擴展到 P04 或整個 M1。
 
 不是停止條件的事：測試失敗（修）、brew 安裝慢（等）、subagent 回報 BLOCKED（換更強模型或拆小重派）、Maven 下載慢（等）。
 
-## 早晨報告：`docs/superpowers/plans/overnight-report.md`
+## 早晨報告：`docs/reports/overnight-report.md`
 
 每完成一個目標項或停下時覆寫，內容固定四段：
-1. **做到哪**：各目標項狀態、branch 名、最後 commit hash、測試數與結果。
+1. **做到哪**：分別列出 P01、P02、P03 與整合驗證狀態、branch／base／最後 commit、測試命令與結果；列出供人 review 的差異基準。明寫整個 M1 尚餘哪些工作。
 2. **Rulings I made**：ledger 裡每一條 `Ruling:`，附「若錯了代價是什麼」。
 3. **Parked / deferred**：審查未修的 minor 與 parked 項。
-4. **需要你決定**：明早第一件要看的事（例如是否 merge `p01-core-finalize`）。
+4. **需要你決定**：明早依 P01 → P02 → P03 順序 review；各分支的待決項、是否可整合、尚未執行的實機驗收。
 
 ## 一句話版
 
-修好 arm64 Java → worktree → 按 P01 計畫派 subagent 逐 task 實作審查 → 全綠後 final review → 寫 P02 任務書 → 實作 P02 → 早晨報告。不問、不 push、不 merge。
+讀現有 worktree／ledger → 完成 P01 → 完成 P02 → P03 plan 與實作 → Source 路徑整合驗證 → 早晨報告。不問、不 push、不 merge；P13 腳本只在有餘裕時處理。
