@@ -286,6 +286,46 @@ class FinalizeRecoveryTest {
         assertThat(root.resolve(key08)).doesNotExist();
     }
 
+    /**
+     * 兩個 handle 都在對方登記前通過檢查、各自送出同 identity 的 link 且都卡住。後送的那個先結束
+     * （此處暫存被清道夫刪 → 確定沒生效）；先送的仍在飛時，任何重呼都不得據「後一個已結束」下結論——
+     * 否則宣告過期會回 DECLARATION_EXPIRED 並刪暫存，而先送的 link 之後照樣落地。
+     */
+    @Test
+    void F1b_two_links_in_flight_stays_pending_until_every_link_settles() throws Exception {
+        WriteHandle a = write(content);
+        WriteHandle b = write(content);
+        CountDownLatch bArrived = new CountDownLatch(1);
+        CountDownLatch bGo = new CountDownLatch(1);
+        nfs.pause("write-manifest-tmp", bArrived, bGo); // b 已過 in-flight 檢查，停在宣告前
+        java.util.concurrent.CompletableFuture<FinalizeResult> bFirst = java.util.concurrent.CompletableFuture.supplyAsync(b::finalizeWrite);
+        assertThat(bArrived.await(5, TimeUnit.SECONDS)).isTrue();
+
+        CountDownLatch releaseA = new CountDownLatch(1);
+        nfs.hang("link-key", releaseA);
+        assertThat(a.finalizeWrite()).isInstanceOf(FinalizeResult.PendingConfirmation.class); // a 的 link 在飛
+        CountDownLatch releaseB = new CountDownLatch(1);
+        nfs.hang("link-key", releaseB);
+        bGo.countDown();
+        assertThat(bFirst.get(5, TimeUnit.SECONDS)).isInstanceOf(FinalizeResult.PendingConfirmation.class); // b 的 link 也在飛
+        assertThat(nfs.hung).hasSize(2);
+
+        Files.delete(b.writingPath()); // 清道夫刪了 b 的暫存
+        releaseB.countDown();
+        assertThat(nfs.hung.get(1)).failsWithin(5, TimeUnit.SECONDS); // b 的 link 以 ENOENT 結束、未生效；a 的仍卡著
+
+        Files.setLastModifiedTime(layout.manifestPath(id), FileTime.from(clock.instant()));
+        clock.advance(Duration.ofDays(8));
+        assertThat(a.finalizeWrite()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
+        assertThat(b.finalizeWrite()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
+        assertThat(a.writingPath()).exists();
+        assertThat(root.resolve(key08)).doesNotExist();
+
+        releaseA.countDown(); // a 的 link 生效
+        assertThat(finalizeUntilSettled(a)).isInstanceOf(FinalizeResult.Success.class);
+        assertThat(root.resolve(key08)).hasBinaryContent(content);
+    }
+
     @Test
     void F1b_writing_file_removed_before_link_is_failure_not_pending() throws Exception {
         WriteHandle h = write(content);

@@ -16,6 +16,7 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
@@ -31,12 +32,15 @@ public final class LocalStore {
     final Clock clock;
     final ManifestCodec codec = new ManifestCodec();
     /**
-     * link-key timeout 後仍可能在執行的 link（D51 修 2、SR-05）。結束前同 identity 的任何 finalizeWrite
-     * 都只回 PENDING_CONFIRMATION，不判年齡、不刪暫存、不送新 link。
+     * link-key timeout 後仍可能在執行的 link（D51 修 2、SR-05），每個 identity 一組：兩個 handle 可能
+     * 在對方登記前都通過檢查、各自送出 link。任一個結束前，同 identity 的任何 finalizeWrite 都只回
+     * PENDING_CONFIRMATION，不判年齡、不刪暫存、不送新 link。
+     * 只經 {@link #linkSent} / {@link #linkInFlight} 在 compute 內改動：集合清空與移除 key 是同一個原子動作，
+     * 剛加入的 future 不會掉進已被移除的集合。
      * ponytail: 以 LocalStore 實例為範圍——同一 mount 在同一 process 開多個 LocalStore 時彼此看不到；
      * 跨 process 不需要（process 死了它的 link 也不會再生效）。
      */
-    final Map<FileIdentity, Future<?>> linksInFlight = new ConcurrentHashMap<>();
+    private final Map<FileIdentity, Set<Future<?>>> linksInFlight = new ConcurrentHashMap<>();
     private final WriteGate gate;
 
     public LocalStore(String sourceNode, PathLayout layout, NfsExecutor nfs, WriteGate gate, Clock clock) {
@@ -45,6 +49,22 @@ public final class LocalStore {
         this.nfs = Objects.requireNonNull(nfs, "nfs");
         this.gate = Objects.requireNonNull(gate, "gate");
         this.clock = Objects.requireNonNull(clock, "clock");
+    }
+
+    void linkSent(FileIdentity id, Future<?> link) {
+        linksInFlight.compute(id, (k, links) -> {
+            Set<Future<?>> s = links != null ? links : ConcurrentHashMap.newKeySet();
+            s.add(link);
+            return s;
+        });
+    }
+
+    /** 先移除已結束者；仍有未結束的 link 才回 true。 */
+    boolean linkInFlight(FileIdentity id) {
+        return linksInFlight.computeIfPresent(id, (k, links) -> {
+            links.removeIf(Future::isDone);
+            return links.isEmpty() ? null : links;
+        }) != null;
     }
 
     public WriteHandle beginWrite(String namespace, String dataClass, String logicalKey) throws WriteRejectedException {

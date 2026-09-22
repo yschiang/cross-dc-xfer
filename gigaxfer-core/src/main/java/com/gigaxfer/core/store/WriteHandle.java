@@ -22,7 +22,6 @@ import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
-import java.util.concurrent.Future;
 
 /**
  * 一次寫入的生命週期：Writing → Finalize → Source Ready，或 Discard。
@@ -127,13 +126,9 @@ public final class WriteHandle implements AutoCloseable {
     public FinalizeResult finalizeWrite() {
         if (failed) return poisoned();
         if (discarded) return new FinalizeResult.Failure(FailureReason.IO, "handle discarded");
-        // 先前送出的 link 還沒結束：NAS 上的結果未定，任何結論（EXPIRED、暫存不在、CONFLICT 以外的 FAILURE）
-        // 都可能被它稍後推翻。結束後移除登記，照原序列重跑——那時 stat-key 看到的就是確定的結果。
-        Future<?> earlierLink = store.linksInFlight.get(id);
-        if (earlierLink != null) {
-            if (!earlierLink.isDone()) return new FinalizeResult.PendingConfirmation("link-key", "earlier link still in flight");
-            store.linksInFlight.remove(id, earlierLink);
-        }
+        // 先前送出的 link（任一個）還沒結束：NAS 上的結果未定，任何結論（EXPIRED、暫存不在、CONFLICT 以外的 FAILURE）
+        // 都可能被它稍後推翻。全部結束後照原序列重跑——那時 stat-key 看到的就是確定的結果。
+        if (store.linkInFlight(id)) return new FinalizeResult.PendingConfirmation("link-key", "earlier link still in flight");
         try {
             // ①：digest != null 代表已 fsync 過，重呼時不再 flush（通道已關，flush 會丟 ClosedChannelException）。
             // force 單獨一個 op 且不關通道：fsync-writing timeout 後通道仍開著，重呼可以再 force 一次
@@ -240,8 +235,7 @@ public final class WriteHandle implements AutoCloseable {
                 });
             } catch (NfsTimeoutException e) {
                 // 已送出、結果未知：保留 operation ownership 直到它真正結束（D51 修 2）。
-                // ponytail: 兩個 handle 同時送出同 identity 的 link 時只記得後一個；要嚴格就改 per-identity 佇列
-                if (e.inFlight() != null) store.linksInFlight.put(id, e.inFlight());
+                if (e.inFlight() != null) store.linkSent(id, e.inFlight());
                 throw e;
             } catch (FileAlreadyExistsException e) {
                 return verifyPublished(contentPath, declared);
