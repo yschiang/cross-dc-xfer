@@ -81,7 +81,7 @@ class FinalizeHappyPathTest {
     }
 
     @Test
-    void large_content_streams_without_buffering_whole_file() throws Exception {
+    void large_content_round_trips_with_matching_digest() throws Exception {
         byte[] chunk = new byte[1 << 20]; // 1 MB × 8 = 8 MB
         for (int i = 0; i < chunk.length; i++) chunk[i] = (byte) i;
         WriteHandle h = store.beginWrite("mes", "metrology", "BIG");
@@ -92,6 +92,16 @@ class FinalizeHappyPathTest {
         assertThat(Files.size(key)).isEqualTo(8L << 20);
         Manifest m = new ManifestCodec().decode(Files.readAllBytes(layout.manifestPath(new FileIdentity("P3", "mes", "BIG"))));
         assertThat(m.digest()).isEqualTo(Sha256.ofFile(key));
+    }
+
+    @Test
+    void fresh_declaration_is_never_expired_even_if_clock_is_far_ahead_of_mtime() throws Exception {
+        clock.advance(Duration.ofDays(8)); // manifest mtime = 檔案系統的現在；clock 已在 8 天後（> DECLARATION_MAX_AGE）
+        WriteHandle h = store.beginWrite("mes", "metrology", "FRESH");
+        h.stream().write("y".getBytes(StandardCharsets.UTF_8));
+
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
+        assertThat(root.resolve("P3/mes/metrology/2026-09-30/08/FRESH")).hasContent("y");
     }
 
     @Test
