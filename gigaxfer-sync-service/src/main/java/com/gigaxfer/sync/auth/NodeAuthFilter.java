@@ -41,6 +41,9 @@ public class NodeAuthFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = PATH_HELPER.getPathWithinApplication(request);
+        if (path.contains("/../") || path.contains("/./") || path.endsWith("/..") || path.endsWith("/.")) {
+            return false; // 不自行解 dot-segment，落回需認證（fail-closed）
+        }
         for (String p : EXEMPT) {
             if (path.equals(p) || path.startsWith(p + "/")) {
                 return true;
@@ -53,7 +56,7 @@ public class NodeAuthFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain)
         throws ServletException, IOException {
         String header = req.getHeader("Authorization");
-        if (header == null || header.length() < 7 || !header.regionMatches(true, 0, "Bearer ", 0, 7)) {
+        if (header == null || !header.regionMatches(true, 0, "Bearer ", 0, 7)) {
             unauthorized(res);
             return;
         }

@@ -42,8 +42,8 @@ class NodeAuthFilterUnitTest {
     }
 
     @Test
-    void node_internal_endpoints_need_no_token() {
-        assertThat(filter.shouldNotFilter(new MockHttpServletRequest("GET", "/policy"))).isTrue();
-        assertThat(filter.shouldNotFilter(new MockHttpServletRequest("GET", "/actuator/health/liveness"))).isTrue();
+    void dot_segments_under_exempt_prefix_fall_back_to_auth() {
+        assertThat(filter.shouldNotFilter(new MockHttpServletRequest("GET", "/actuator/../pending"))).isFalse();
+        assertThat(filter.shouldNotFilter(new MockHttpServletRequest("GET", "/policy/./x"))).isFalse();
     }
 }

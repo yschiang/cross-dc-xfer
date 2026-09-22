@@ -2,6 +2,7 @@ package com.gigaxfer.sync.auth;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -75,5 +76,19 @@ class NodeAuthFilterTest extends SyncTestSupport {
         mvc.perform(get("/received").param("target", "P3").header("Authorization", "Bearer " + P2_TOKEN))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.caller").value("P2"));
+    }
+
+    @Test
+    void lowercase_bearer_scheme_is_accepted() throws Exception {
+        mvc.perform(get("/pending").header("Authorization", "bearer " + P2_TOKEN)).andExpect(status().isOk());
+    }
+
+    @Test
+    void unauthorized_response_carries_www_authenticate_and_forbidden_hides_node_names() throws Exception {
+        mvc.perform(get("/pending")).andExpect(status().isUnauthorized())
+            .andExpect(header().string("WWW-Authenticate", "Bearer"));
+        String body = mvc.perform(get("/pending").param("target", "P3").header("Authorization", "Bearer " + P2_TOKEN))
+            .andExpect(status().isForbidden()).andReturn().getResponse().getContentAsString();
+        assertThat(body).doesNotContain("P2").doesNotContain("P3");
     }
 }
