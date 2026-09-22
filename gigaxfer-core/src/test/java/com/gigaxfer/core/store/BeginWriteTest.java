@@ -79,6 +79,20 @@ class BeginWriteTest {
         assertThat(root.resolve("P3")).doesNotExist();
     }
 
+    /** I2：dataClass 也是原始路徑片段，沒檢查就能用 ".." 逃出 namespace 樹。 */
+    @Test
+    void invalid_data_class_is_rejected_before_touching_nfs() throws Exception {
+        for (String bad : new String[]{"../x", "", "a/b"}) {
+            assertThatThrownBy(() -> store(WriteGate.open()).beginWrite("mes", bad, "L1"))
+                .describedAs("dataClass=%s", bad)
+                .isInstanceOf(IllegalArgumentException.class);
+        }
+        try (Stream<Path> s = Files.walk(root)) {
+            assertThat(s.filter(Files::isRegularFile)).isEmpty();
+        }
+        assertThat(root.resolve("P3")).doesNotExist();
+    }
+
     @Test
     void invalid_logical_key_is_rejected_before_touching_nfs() {
         assertThatThrownBy(() -> store(WriteGate.open()).beginWrite("mes", "metrology", "bad.writing"))

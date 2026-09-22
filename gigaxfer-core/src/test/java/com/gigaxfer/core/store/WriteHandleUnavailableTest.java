@@ -1,5 +1,6 @@
 package com.gigaxfer.core.store;
 
+import com.gigaxfer.core.identity.FileIdentity;
 import com.gigaxfer.core.layout.PathLayout;
 import com.gigaxfer.core.nfs.BoundedNfsExecutor;
 import com.gigaxfer.core.nfs.NfsBusyException;
@@ -71,6 +72,25 @@ class WriteHandleUnavailableTest {
 
         assertThat(h.finalizeWrite())
             .isEqualTo(new FinalizeResult.Failure(FailureReason.IO, "stream failed at write"));
+    }
+
+    /** C1：一般 IOException（ENOSPC/EIO…）也必須毒化 handle，否則會發布位元組與宣告不一致的檔。 */
+    @Test
+    void write_io_error_poisons_handle_and_finalize_publishes_nothing() throws Exception {
+        FaultInjectingNfs nfs = new FaultInjectingNfs(real);
+        LocalStore store = new LocalStore("P3", layout, nfs, WriteGate.open(), clock);
+        WriteHandle h = store.beginWrite("mes", "metrology", "L3");
+
+        nfs.failBefore("write"); // ENOSPC：位元組沒落盤，md/size 也沒更新
+        assertThatThrownBy(() -> h.stream().write(new byte[128 * 1024]))
+            .isInstanceOf(IOException.class)
+            .isNotInstanceOf(NfsUnavailableException.class);
+
+        FinalizeResult r = h.finalizeWrite();
+        assertThat(r).isInstanceOf(FinalizeResult.Failure.class);
+        assertThat(((FinalizeResult.Failure) r).reason()).isEqualTo(FailureReason.IO);
+        assertThat(layout.manifestDir(new FileIdentity("P3", "mes", "L3"))).doesNotExist();
+        assertThat(h.writingPath()).doesNotExist();
     }
 
     @Test

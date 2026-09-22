@@ -15,7 +15,8 @@ public record FileIdentity(String sourceNode, String namespace, String logicalKe
         }
     }
 
-    private static void requireSegment(String v, String name) {
+    /** 可重用的路徑片段檢查：Data class 等「不是 identity 但同樣直接成為路徑片段」的值也要過這關。 */
+    public static void requireSegment(String v, String name) {
         if (v == null || v.isEmpty() || v.startsWith(".") || v.indexOf('/') >= 0 || v.indexOf('\0') >= 0) {
             throw new IllegalArgumentException(name + " is not a valid path segment: " + v);
         }

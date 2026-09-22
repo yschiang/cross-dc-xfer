@@ -11,6 +11,7 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.HexFormat;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -27,8 +28,8 @@ public final class PathLayout {
     private final ZoneId zone;
 
     public PathLayout(Path root, ZoneId zone) {
-        this.root = root.toAbsolutePath().normalize();
-        this.zone = zone;
+        this.root = Objects.requireNonNull(root, "root").toAbsolutePath().normalize();
+        this.zone = Objects.requireNonNull(zone, "zone");
     }
 
     public Path root() {

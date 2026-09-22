@@ -6,7 +6,11 @@ public final class WriteRejectedException extends Exception {
     private final Reason reason;
 
     public WriteRejectedException(Reason reason, String detail) {
-        super(reason + ": " + detail);
+        this(reason, detail, null);
+    }
+
+    public WriteRejectedException(Reason reason, String detail, Throwable cause) {
+        super(reason + ": " + detail, cause);
         this.reason = reason;
     }
 

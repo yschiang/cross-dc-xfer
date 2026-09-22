@@ -3,9 +3,8 @@ package com.gigaxfer.core.store;
 import com.gigaxfer.core.identity.FileIdentity;
 import com.gigaxfer.core.layout.PathLayout;
 import com.gigaxfer.core.manifest.ManifestCodec;
-import com.gigaxfer.core.nfs.NfsBusyException;
+import com.gigaxfer.core.nfs.NfsException;
 import com.gigaxfer.core.nfs.NfsExecutor;
-import com.gigaxfer.core.nfs.NfsTimeoutException;
 
 import java.io.IOException;
 import java.nio.channels.FileChannel;
@@ -14,6 +13,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -30,15 +30,18 @@ public final class LocalStore {
     private final WriteGate gate;
 
     public LocalStore(String sourceNode, PathLayout layout, NfsExecutor nfs, WriteGate gate, Clock clock) {
-        this.sourceNode = sourceNode;
-        this.layout = layout;
-        this.nfs = nfs;
-        this.gate = gate;
-        this.clock = clock;
+        this.sourceNode = Objects.requireNonNull(sourceNode, "sourceNode");
+        this.layout = Objects.requireNonNull(layout, "layout");
+        this.nfs = Objects.requireNonNull(nfs, "nfs");
+        this.gate = Objects.requireNonNull(gate, "gate");
+        this.clock = Objects.requireNonNull(clock, "clock");
     }
 
     public WriteHandle beginWrite(String namespace, String dataClass, String logicalKey) throws WriteRejectedException {
-        FileIdentity id = new FileIdentity(sourceNode, namespace, logicalKey); // 命名違約在碰 NFS 前就丟 IllegalArgumentException
+        // 命名違約在碰 NFS 前就丟 IllegalArgumentException。dataClass 同樣是原始路徑片段
+        // （contentDir 直接 resolve 它），沒檢查的話 "../.." 會逃出 namespace 樹。
+        FileIdentity id = new FileIdentity(sourceNode, namespace, logicalKey);
+        FileIdentity.requireSegment(dataClass, "dataClass");
         Optional<String> reject = gate.rejectReason(namespace, dataClass);
         if (reject.isPresent()) throw new WriteRejectedException(WriteRejectedException.Reason.REJECTED, reject.get());
 
@@ -51,10 +54,10 @@ public final class LocalStore {
                 return FileChannel.open(writing, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
             });
             return new WriteHandle(this, id, dataClass, uuid, writing, channel);
-        } catch (NfsBusyException | NfsTimeoutException e) {
-            throw new WriteRejectedException(WriteRejectedException.Reason.UNAVAILABLE, e.getMessage());
+        } catch (NfsException e) {
+            throw new WriteRejectedException(WriteRejectedException.Reason.UNAVAILABLE, e.getMessage(), e);
         } catch (IOException e) {
-            throw new WriteRejectedException(WriteRejectedException.Reason.IO, e.toString());
+            throw new WriteRejectedException(WriteRejectedException.Reason.IO, e.toString(), e);
         }
     }
 }

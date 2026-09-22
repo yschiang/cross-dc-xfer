@@ -16,12 +16,17 @@ import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 
-/** 一次寫入的生命週期：Writing → Finalize → Source Ready，或 Discard。 */
+/**
+ * 一次寫入的生命週期：Writing → Finalize → Source Ready，或 Discard。
+ *
+ * <p>單執行緒使用，不可跨執行緒共用：內部的 digest、size 與 poisoned 旗標都沒有同步。
+ */
 public final class WriteHandle implements AutoCloseable {
     private static final int BUFFER = 64 * 1024;
 
@@ -154,12 +159,20 @@ public final class WriteHandle implements AutoCloseable {
                         "identity already declared with different content: " + declared.digest() + " size=" + declared.size());
                 }
             }
-            bestEffort("unlink-manifest-tmp", () -> Files.deleteIfExists(tmp));
-
             Path contentPath = store.layout.fromContentPath(declared.contentPath());
 
-            // rediscovery：已發布？
-            if (store.nfs.call("stat-key", () -> Files.exists(contentPath))) {
+            // rediscovery：已發布？只有既有宣告才可能已發布——本次剛建立的宣告不會有 <key>，
+            // 殘留情況仍由 ③ link-key 的 EEXIST 分支涵蓋。
+            // Files.exists 會把讀取失敗吞成「不存在」，那會讓 EIO/ESTALE 被誤判成未發布（甚至 EXPIRED），
+            // 所以用 readAttributes：只有 NoSuchFileException 算不存在，其餘 IOException 往外傳成 Failure(IO)。
+            if (preexisting && store.nfs.call("stat-key", () -> {
+                try {
+                    Files.readAttributes(contentPath, BasicFileAttributes.class);
+                    return true;
+                } catch (NoSuchFileException e) {
+                    return false;
+                }
+            })) {
                 return verifyPublished(contentPath, declared);
             }
 
@@ -206,7 +219,7 @@ public final class WriteHandle implements AutoCloseable {
 
     /** 重試路徑的當下證據（D44）：重讀 &lt;key&gt; 算 digest 對 manifest。 */
     private FinalizeResult verifyPublished(Path contentPath, Manifest declared) throws NfsException, IOException {
-        String actual = store.nfs.call("digest-key", () -> Sha256.ofFile(contentPath));
+        String actual = Sha256.ofFile(store.nfs, "digest-key", contentPath);
         cleanupTemps();
         if (!actual.equals(declared.digest())) {
             return new FinalizeResult.Failure(FailureReason.CONFLICT, "published content " + actual + " != declared " + declared.digest());
@@ -227,7 +240,13 @@ public final class WriteHandle implements AutoCloseable {
         }
     }
 
-    /** 只關通道，不刪任何檔：PENDING_CONFIRMATION 後 Application 仍可重呼 finalizeWrite。 */
+    /**
+     * 只關通道，不刪任何檔：PENDING_CONFIRMATION 後 Application 仍可重呼 finalizeWrite。
+     *
+     * <p>注意：關通道本身也經有界執行器，池滿／timeout 時丟 {@link NfsUnavailableException}，
+     * 此時 fd 並未關閉（刻意不繞過執行器——繞過就等於在 hard mount 卡住時無界地占用呼叫端執行緒）。
+     * fd 會在 JVM 結束或 handle 被 GC 時才還給 OS；呼叫端可稍後重呼 close()。
+     */
     @Override
     public void close() throws IOException {
         try {
@@ -256,6 +275,14 @@ public final class WriteHandle implements AutoCloseable {
                 failed = true;
                 failedOp = e.op();
                 throw new NfsUnavailableException(e.op(), e);
+            } catch (Exception e) {
+                // ENOSPC / EDQUOT / EIO / ESTALE 等一般 IOException 也必須毒化 handle：
+                // md 與 size 沒更新，落盤位元組已與宣告不一致，不能讓 finalizeWrite() 回 Success。
+                failed = true;
+                failedOp = "write";
+                if (e instanceof IOException io) throw io;
+                if (e instanceof RuntimeException re) throw re;
+                throw new IOException("write failed", e);
             }
             md.update(b, off, len);
             size += len;

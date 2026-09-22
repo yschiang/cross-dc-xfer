@@ -83,7 +83,7 @@ class FinalizeRecoveryTest {
     }
 
     @Test
-    void manifest_link_reply_lost_then_retry_continues_with_same_declaration() throws Exception {
+    void F5b_manifest_link_reply_lost_then_retry_publishes_at_declared_content_path() throws Exception {
         WriteHandle h = write(content);
         nfs.dropAfter("link-manifest");
         assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
@@ -147,12 +147,51 @@ class FinalizeRecoveryTest {
     }
 
     @Test
-    void F5b_published_file_corrupted_then_same_content_retry_is_conflict() throws Exception {
+    void D44_published_file_corrupted_then_same_content_retry_is_conflict() throws Exception {
         assertThat(write(content).finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
         Files.write(root.resolve(key08), "corrupt".getBytes(StandardCharsets.UTF_8));
         FinalizeResult r = write(content).finalizeWrite();
         assertThat(r).isInstanceOf(FinalizeResult.Failure.class);
         assertThat(((FinalizeResult.Failure) r).reason()).isEqualTo(FailureReason.CONFLICT);
+    }
+
+    /** I3：digest-key 逐塊送出，中段 timeout 仍是 PendingConfirmation 且重試收斂（整檔一次讀完到不了第 3 次 op）。 */
+    @Test
+    void digest_key_is_chunked_so_a_mid_file_timeout_is_pending_and_retry_converges() throws Exception {
+        byte[] big = new byte[200 * 1024]; // 4 個 64 KB chunk
+        for (int i = 0; i < big.length; i++) big[i] = (byte) i;
+        WriteHandle h = store.beginWrite("mes", "metrology", "BIG");
+        h.stream().write(big);
+
+        nfs.dropAfter("link-key"); // link 已完成、回覆遺失 → 重試走 verifyPublished
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
+
+        nfs.dropBeforeNth("digest-key", 3); // open=1、read=2、read=3 → 落在檔案中段
+        FinalizeResult r = h.finalizeWrite();
+        assertThat(r).isInstanceOf(FinalizeResult.PendingConfirmation.class);
+        assertThat(((FinalizeResult.PendingConfirmation) r).op()).isEqualTo("digest-key");
+
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
+        assertThat(root.resolve("P3/mes/metrology/2026-09-22/08/BIG")).hasBinaryContent(big);
+    }
+
+    /** I4：stat-key 讀取失敗不得被當成「不存在」——那會把已發布的 key 判成 DECLARATION_EXPIRED。 */
+    @Test
+    void stat_key_read_error_is_io_failure_not_declaration_expired() throws Exception {
+        assertThat(write(content).finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
+
+        // 讓 stat(<key>) 失敗但不是 ENOENT：把 content_path 的小時目錄換成自指 symlink → ELOOP
+        Path hour = root.resolve("P3/mes/metrology/2026-09-22/08");
+        Files.delete(root.resolve(key08));
+        Files.delete(hour);
+        Files.createSymbolicLink(hour, hour);
+
+        Files.setLastModifiedTime(layout.manifestPath(id), FileTime.from(clock.instant()));
+        clock.advance(Duration.ofDays(8)); // 宣告已逾期：吞掉讀取錯誤的實作會回 DECLARATION_EXPIRED
+
+        FinalizeResult r = write(content).finalizeWrite();
+        assertThat(r).isInstanceOf(FinalizeResult.Failure.class);
+        assertThat(((FinalizeResult.Failure) r).reason()).isEqualTo(FailureReason.IO);
     }
 
     @Test
