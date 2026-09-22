@@ -1,0 +1,25 @@
+server:
+  port: 8080
+spring:
+  application:
+    name: gigaxfer-sync
+  flyway:
+    enabled: false          # migration 由 DbBootstrap 在背景重試執行（D34 修）
+  datasource:
+    hikari:
+      initialization-fail-timeout: -1   # DB 不可用時不阻擋啟動
+      maximum-pool-size: 8
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,info
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      node: ${gigaxfer.node}
+gigaxfer:
+  nfs-timeout: 30s
+  nfs-slots: 16
