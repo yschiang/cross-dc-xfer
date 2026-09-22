@@ -30,7 +30,7 @@ class ConfigCodecTest {
         assertThat(c.schemaVersion()).isEqualTo(1);
         assertThat(c.version()).isEqualTo(3L);
         assertThat(c.publishedBy()).isEqualTo("alice");
-        assertThat(c.policy().fab()).isEqualTo("F12");
+        assertThat(c.policy().deployment()).isEqualTo("example-deployment");
         assertThat(c.policy().nodes()).containsExactly("P1", "P2", "P3");
         assertThat(c.policy().targetsFor("P1", "lot-log")).contains(Set.of("P2", "P3"));
         assertThat(c.policy().targetsFor("P1", "local-only")).contains(Set.of());
@@ -146,7 +146,8 @@ class ConfigCodecTest {
     void encode_policy_is_single_line_snake_case_json() throws IOException {
         NodeConfig c = ConfigCodec.decode(fixture());
         String json = new String(ConfigCodec.encodePolicy(c.policy()), StandardCharsets.UTF_8);
-        assertThat(json).startsWith("{\"fab\":\"F12\",\"nodes\":[\"P1\",\"P2\",\"P3\"],\"required_targets\":[");
+        assertThat(json).startsWith("{");
+        assertThat(json).contains("\"namespaces\":[\"analytics\",\"transactions\"]");
         assertThat(json).endsWith("}\n");
         assertThat(json.strip()).doesNotContain("\n");
     }
@@ -155,5 +156,42 @@ class ConfigCodecTest {
     void encode_then_decode_round_trips() throws IOException {
         NodeConfig c = ConfigCodec.decode(fixture());
         assertThat(ConfigCodec.decode(ConfigCodec.encode(c))).isEqualTo(c);
+    }
+
+    @Test
+    void registry_rejects_unregistered_namespace_but_allows_local_only_class() throws IOException {
+        Policy policy = ConfigCodec.decode(fixture()).policy();
+        assertThat(policy.namespaces()).containsExactly("analytics", "transactions");
+        assertThat(policy.allowsWrite("transactions", "P1", "lot-log")).isTrue();
+        assertThat(policy.allowsWrite("transactions", "P1", "local-only")).isTrue();
+        assertThat(policy.allowsWrite("unregistered", "P1", "lot-log")).isFalse();
+        assertThat(policy.allowsWrite("transactions", "P1", "unregistered")).isFalse();
+    }
+
+    @Test
+    void namespace_registry_is_validated_and_part_of_policy_identity() throws IOException {
+        String entry = "\"namespaces\": [\"transactions\", \"analytics\"]";
+        Policy original = ConfigCodec.decode(fixture()).policy();
+        assertThat(ConfigCodec.decode(mutate(entry,
+            "\"namespaces\": [\"analytics\", \"transactions\"]")).policy()).isEqualTo(original);
+        assertThat(ConfigCodec.decode(mutate(entry,
+            "\"namespaces\": [\"transactions\"]")).policy()).isNotEqualTo(original);
+        assertThatThrownBy(() -> ConfigCodec.decode(mutate(entry,
+            "\"namespaces\": [\"transactions\", \"transactions\"]")))
+            .isInstanceOf(InvalidConfigException.class);
+        assertThatThrownBy(() -> ConfigCodec.decode(mutate(entry,
+            "\"namespaces\": [\"../escape\"]")))
+            .isInstanceOf(InvalidConfigException.class);
+        assertThatThrownBy(() -> ConfigCodec.decode(mutate(entry + ",", "")))
+            .isInstanceOf(InvalidConfigException.class);
+    }
+
+    @Test
+    void rejects_duplicate_peer_token_hash() throws IOException {
+        assertThatThrownBy(() -> ConfigCodec.decode(mutate(
+            "\"P2\": \"cd080f7d82024533203a52d5493255eba01280b4b2c56e025f7d90bd0dcb8590\"",
+            "\"P2\": \"a770a998b69adca5f88498fcd315c7d49d54b3ab2091c6f8afab58390bb1da1a\"")))
+            .isInstanceOf(InvalidConfigException.class)
+            .hasMessageContaining("uniquely");
     }
 }

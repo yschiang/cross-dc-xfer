@@ -32,7 +32,7 @@ class PolicyEndpointTest extends SyncTestSupport {
             .andExpect(status().isOk())
             .andExpect(content().contentTypeCompatibleWith("application/json"))
             .andExpect(jsonPath("$.version").value(3))
-            .andExpect(jsonPath("$.policy.fab").value("F12"))
+            .andExpect(jsonPath("$.policy.deployment").value("example-deployment"))
             .andExpect(jsonPath("$.policy.nodes[0]").value("P1"))
             .andExpect(jsonPath("$.policy.required_targets[0].source_node").value("P1"))
             .andExpect(jsonPath("$.policy.required_targets[0].data_class").value("local-only"))

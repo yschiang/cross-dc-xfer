@@ -4,8 +4,9 @@
   "published_by": "alice",
   "published_at": "2026-09-20T02:00:00Z",
   "policy": {
-    "fab": "F12",
+    "deployment": "example-deployment",
     "nodes": ["P1", "P2", "P3"],
+    "namespaces": ["transactions", "analytics"],
     "required_targets": [
       { "source_node": "P1", "data_class": "lot-log", "targets": ["P2", "P3"] },
       { "source_node": "P1", "data_class": "local-only", "targets": [] },

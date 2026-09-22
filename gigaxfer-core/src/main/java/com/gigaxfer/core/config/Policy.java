@@ -11,10 +11,19 @@ import java.util.TreeSet;
 
 /** Policy：第一版運行期間不可變的對照表。經 ConfigCodec 解碼後 nodes 與 required_targets 已排序，記錄相等即語意相等。 */
 @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
-public record Policy(String fab, List<String> nodes, List<RequiredTargets> requiredTargets) {
+public record Policy(String deployment, List<String> nodes, List<String> namespaces, List<RequiredTargets> requiredTargets) {
     public Policy {
         nodes = List.copyOf(nodes);
+        namespaces = List.copyOf(namespaces);
         requiredTargets = List.copyOf(requiredTargets);
+    }
+
+    public boolean isNamespaceRegistered(String namespace) {
+        return namespaces.contains(namespace);
+    }
+
+    public boolean allowsWrite(String namespace, String sourceNode, String dataClass) {
+        return isNamespaceRegistered(namespace) && targetsFor(sourceNode, dataClass).isPresent();
     }
 
     /** 未登錄的 (source, class) 回 empty；登錄但 targets 為空回 Optional.of(空集合)。 */
@@ -34,6 +43,6 @@ public record Policy(String fab, List<String> nodes, List<RequiredTargets> requi
             .map(rt -> new RequiredTargets(rt.sourceNode(), rt.dataClass(), new TreeSet<>(rt.targets()).stream().toList()))
             .sorted(Comparator.comparing(RequiredTargets::sourceNode).thenComparing(RequiredTargets::dataClass))
             .toList();
-        return new Policy(fab, ns, rts);
+        return new Policy(deployment, ns, new TreeSet<>(namespaces).stream().toList(), rts);
     }
 }

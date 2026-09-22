@@ -80,13 +80,19 @@ public final class ConfigCodec {
     }
 
     private static Policy validatePolicy(Policy p) throws InvalidConfigException {
-        require(p.fab() != null && !p.fab().isBlank(), "policy.fab is required");
+        require(p.deployment() != null && !p.deployment().isBlank(), "policy.deployment is required");
         require(p.nodes() != null && !p.nodes().isEmpty(), "policy.nodes must not be empty");
         require(p.nodes().size() <= MAX_NODES, "policy.nodes must have at most " + MAX_NODES + " entries");
         Set<String> nodes = new HashSet<>();
         for (String n : p.nodes()) {
             segment("policy.nodes", n);
             require(nodes.add(n), "policy.nodes has duplicate " + n);
+        }
+        require(p.namespaces() != null, "policy.namespaces is required");
+        Set<String> namespaces = new HashSet<>();
+        for (String namespace : p.namespaces()) {
+            segment("policy.namespaces", namespace);
+            require(namespaces.add(namespace), "policy.namespaces has duplicate " + namespace);
         }
         require(p.requiredTargets() != null, "policy.required_targets is required");
         Set<String> pairs = new HashSet<>();
@@ -121,10 +127,12 @@ public final class ConfigCodec {
         positive("capacity_alert_bytes", o.capacityAlertBytes());
         require(o.capacityRejectBytes() < o.capacityAlertBytes(),
             "capacity_reject_bytes must be below capacity_alert_bytes");
+        Set<String> tokenHashes = new HashSet<>();
         for (Map.Entry<String, String> e : o.peerTokenSha256().entrySet()) {
             require(p.nodes().contains(e.getKey()), "peer_token_sha256 has unknown node " + e.getKey());
             require(e.getValue() != null && SHA256_HEX.matcher(e.getValue()).matches(),
                 "peer_token_sha256[" + e.getKey() + "] must be 64 lowercase hex (sha256)");
+            require(tokenHashes.add(e.getValue()), "peer_token_sha256 must uniquely identify each node");
         }
     }
 
