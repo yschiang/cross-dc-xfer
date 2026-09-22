@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
+import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
@@ -36,8 +36,12 @@ class DbOutageRecoveryTest extends SyncTestSupport {
 
         @Bean
         @Primary
-        DataSource flakyDataSource(DataSourceProperties props) {
-            DataSource real = props.initializeDataSourceBuilder().build();
+        DataSource flakyDataSource() {
+            DataSource real = DataSourceBuilder.create()
+                .url("jdbc:h2:mem:outage;MODE=Oracle;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false")
+                .username("sa")
+                .password("")
+                .build();
             return new DelegatingDataSource(real) {
                 @Override
                 public Connection getConnection() throws SQLException {

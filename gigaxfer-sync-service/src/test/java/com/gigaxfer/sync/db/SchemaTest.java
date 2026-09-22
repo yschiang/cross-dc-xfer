@@ -58,7 +58,7 @@ class SchemaTest extends SyncTestSupport {
     @Test
     void obligation_state_check_constraint_rejects_unknown_state() {
         assertThat(db.awaitReady(Duration.ofSeconds(30))).isTrue();
-        jdbc.update("INSERT INTO file_identity (source_node, namespace, logical_key, data_class, size, digest, source_ready_at, content_path) "
+        jdbc.update("INSERT INTO file_identity (source_node, namespace, logical_key, data_class, size_bytes, digest, source_ready_at, content_path) "
             + "VALUES ('P1','mes','k1','lot-log',1,'sha256:" + "0".repeat(64) + "',CURRENT_TIMESTAMP,'P1/mes/lot-log/2026-09-20/02/k1')");
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> jdbc.update(
             "INSERT INTO obligation (source_node, namespace, logical_key, target_node, state, epoch, attempts) "
@@ -71,7 +71,7 @@ class SchemaTest extends SyncTestSupport {
     void remote_received_keeps_source_selected_path_without_local_source_row() {
         assertThat(db.awaitReady(Duration.ofSeconds(30))).isTrue();
         String path = "P2/transactions/lot-log/2026-09-20/02/remote-path-test";
-        jdbc.update("INSERT INTO received (source_node, namespace, logical_key, data_class, content_path, size, digest, "
+        jdbc.update("INSERT INTO received (source_node, namespace, logical_key, data_class, content_path, size_bytes, digest, "
             + "source_ready_at, valid, incarnation, epoch, report_pending, recovery_pending, change_seq) "
             + "VALUES ('P2','transactions','remote-path-test','lot-log',?,1,?,CURRENT_TIMESTAMP,1,?,1,0,0,999)",
             path, "sha256:" + "0".repeat(64), "00000000-0000-0000-0000-000000000002");

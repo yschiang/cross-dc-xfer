@@ -14,7 +14,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 啟動序列第二步（D34）：開 DB。DB 連不上不退出：背景重試 migration（預設每 5 s，
- * 可用 gigaxfer.db-retry-millis 覆寫，測試用），期間 health 回 DOWN（D34 修）。
+ * 可用 gigaxfer.db-retry-millis 覆寫，測試用），期間 {@link com.gigaxfer.sync.health.DbHealthIndicator}
+ * 回 DOWN（D34 修）。
  * bootstrap 列：node_meta 一列（incarnation 只在首次建立時產生，D55 (5)）、seq_counter 兩列（D29 修 11）。
  */
 @Configuration

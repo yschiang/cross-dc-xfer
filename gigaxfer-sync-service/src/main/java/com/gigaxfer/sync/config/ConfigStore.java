@@ -49,7 +49,7 @@ public final class ConfigStore {
         }
 
         if (Files.exists(candidate)) {
-            String reason = validateCandidate(candidate, baseline);
+            String reason = validateCandidate(candidate, baseline.orElseThrow());
             if (reason == null) {
                 NodeConfig accepted;
                 try {
@@ -61,8 +61,7 @@ public final class ConfigStore {
                     Files.move(active, lkg, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
                 }
                 Files.move(candidate, active, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-                log.info("activated config version {} (previous {})", accepted.version(),
-                    baseline.map(b -> Long.toString(b.version())).orElse("none"));
+                log.info("activated config version {} (previous {})", accepted.version(), baseline.orElseThrow().version());
                 return new ConfigActivation(accepted, ConfigActivation.Source.ACTIVE, Optional.empty());
             }
             log.warn("candidate.json rejected, left in place: {}", reason);
@@ -78,22 +77,19 @@ public final class ConfigStore {
         return new ConfigActivation(fromLkg, ConfigActivation.Source.LKG, failure);
     }
 
-    /** 回 null = 通過；否則為拒絕原因。 */
-    private static String validateCandidate(Path candidate, Optional<NodeConfig> baseline) throws IOException {
+    /** 回 null = 通過；否則為拒絕原因。呼叫點已保證 baseline 非空。 */
+    private static String validateCandidate(Path candidate, NodeConfig baseline) throws IOException {
         NodeConfig c;
         try {
             c = ConfigCodec.decode(Files.readAllBytes(candidate));
         } catch (InvalidConfigException e) {
             return "candidate invalid: " + e.getMessage();
         }
-        if (baseline.isPresent()) {
-            NodeConfig b = baseline.get();
-            if (c.version() <= b.version()) {
-                return "candidate version " + c.version() + " is not greater than current version " + b.version();
-            }
-            if (!c.policy().equals(b.policy())) {
-                return "candidate policy segment differs from current version " + b.version() + " (policy is immutable in v1)";
-            }
+        if (c.version() <= baseline.version()) {
+            return "candidate version " + c.version() + " is not greater than current version " + baseline.version();
+        }
+        if (!c.policy().equals(baseline.policy())) {
+            return "candidate policy segment differs from current version " + baseline.version() + " (policy is immutable in v1)";
         }
         return null;
     }
