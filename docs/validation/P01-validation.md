@@ -12,7 +12,7 @@
 | 提交分支 | `p01-core-finalize-pr`，基於 `c891fc655bcc70c736f659d11f4d1a34099da825`；首個 commit `f17cc4c` 移入原實作，之後的修正 commit 回應 PR #3 review 與 CI（見「審查修正」） |
 | 被測版本 | 本文件所在 commit（提交前與提交後均以相同 worktree 內容重跑） |
 | 本次執行 | 2026-09-23，macOS arm64，本機暫存檔案系統；JDK 27、Maven 3.9.16，`maven.compiler.release=21` |
-| 結果 | **98 tests，0 failures、0 errors、0 skipped**；Surefire XML 彙總 |
+| 結果 | **99 tests，0 failures、0 errors、0 skipped**（`7913a88` 起，含 `FinalizeRetryTest.discard_after_finalize_started_is_rejected_and_keeps_temp`）；Surefire XML 彙總 |
 | CI | GitHub Actions `CI`（`.github/workflows/ci.yml`）以 Temurin **JDK 21** 執行 `mvn -B -ntp verify`；本地修正尚未 push，沒有對應 remote check |
 
 舊 P01 分支與現行 main 無共同祖先，因此另建提交分支，未改寫原 P01／P02 分支。本紀錄不是 GitHub Reviewer 已批准。
@@ -78,7 +78,7 @@ mvn -q -pl gigaxfer-core test
 
 - **執行環境：** Java 21 runtime 尚未重跑；本次是 JDK 27 編譯至 release 21。CI workflow 已存在，但本地修正尚未 push，沒有對應 remote run。
 - **P13：** 真實 OS／NFSv3 client／NAS 的 fsync 穩定儲存、hard link、failover、長時間掛起與操作所有權語意。
-- **P10：** Policy／容量 WriteGate、Consumer API、指標與 library 打包；完整 F18 整合不在這 98 個測試內。
+- **P10：** Policy／容量 WriteGate、Consumer API、指標與 library 打包；完整 F18 整合不在這 99 個測試內（core 半邊：`BoundedNfsExecutorTest`、`FinalizeUnderPressureTest`）。
 - **整個 M1** 尚未驗收；本票只涵蓋 core library。
 - **P09／P14：** 孤兒暫存檔清理、跨 Node E2E、容量與長時間壓測。
 - **既存低優先項：** 大於等於 64 KB 的單次 write 仍是一個 NFS operation；部分 open／close timeout 的 handle 回收依賴 Cleaner；pool 指標由後續整合。這些不因本票開 PR 而視為已解決。
