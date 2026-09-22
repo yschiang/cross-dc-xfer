@@ -9,10 +9,11 @@
 | 項目 | 證據 |
 | --- | --- |
 | 原實作 | `p01-core-finalize`，`86360ac615cddba46c98ce797931bfb755254bf9`（11 個 task；whole-branch review → 修正 → scoped re-review CLEAN，記於本地 P01 SDD ledger） |
-| 提交分支 | `p01-core-finalize-pr`，基於 `c891fc655bcc70c736f659d11f4d1a34099da825`；首個 commit `f17cc4c` 移入原實作，之後 8 個修正 commit 回應 PR #3 review（見「審查修正」） |
-| 被測版本 | 本文件所在 commit 的前一個 commit `583129f5ae89735d80a000eef1c44541e192e014`（本文件所在 commit 只改本檔） |
+| 提交分支 | `p01-core-finalize-pr`，基於 `c891fc655bcc70c736f659d11f4d1a34099da825`；首個 commit `f17cc4c` 移入原實作，之後的修正 commit 回應 PR #3 review 與 CI（見「審查修正」） |
+| 被測版本 | 本文件所在 commit 的前一個 commit `87f58f7`（本文件所在 commit 只改本檔） |
 | 本次執行 | 2026-09-23，macOS arm64，本機暫存檔案系統；JDK 27、Maven 3.9.16，`maven.compiler.release=21` |
-| 結果 | **81 tests，0 failures、0 errors、0 skipped**；Surefire XML 彙總 |
+| 結果 | **82 tests，0 failures、0 errors、0 skipped**；Surefire XML 彙總 |
+| CI | GitHub Actions `CI`（`.github/workflows/ci.yml`）以 Temurin **JDK 21** 執行 `mvn -B -ntp verify`；結果見 PR #3 checks |
 
 舊 P01 分支與現行 main 無共同祖先，因此另建提交分支，未改寫原 P01／P02 分支。本紀錄不是 GitHub Reviewer 已批准。
 
@@ -38,7 +39,7 @@ mvn -q -pl gigaxfer-core test
 | P01-04 | FinalizeHappyPathTest、FinalizeRecoveryTest；FinalizeRetryTest `writes_after_success_are_rejected_even_if_close_failed` | 正常發布、空檔、大檔、宣告路徑、暫存清理、SUCCESS 後拒寫；不證明真實 NAS 持久化 |
 | P01-05 | 同 handle 重試、隔日新 handle、F5、D44 的測試 | 相同內容成功；衝突不覆寫已發布檔 |
 | P01-06 | FinalizeRecoveryTest 的 F1b、F2、F2b、F3、F4、F5b、scenario_11；link 在飛：`F1b_link_in_flight_then_declaration_expires_is_pending_until_link_settles`、`F1b_writing_removed_while_link_in_flight_is_pending_until_link_settles`、`F1b_two_links_in_flight_stays_pending_until_every_link_settles` | 模擬操作前失敗／操作後回覆遺失／已送出卡住；in-flight 紀錄以單一 LocalStore 實例為範圍；沒有殺 process 或 NAS failover |
-| P01-07 | BoundedNfsExecutorTest（含 `timeout_hands_back_the_still_running_operation`：timeout 交出仍在執行的 future）、FinalizeUnderPressureTest、chunked digest 測試；Sha256Test `every_public_file_digest_entry_requires_the_nfs_executor`（檔案 digest 只能經執行器）；manifest 有界讀取（`read_from_stream_round_trips`、`oversized_existing_manifest_is_not_a_valid_declaration`） | timeout 槽保留、池滿行為、digest 分塊；未做真實 NAS hang 壓測 |
+| P01-07 | BoundedNfsExecutorTest（含 `timeout_hands_back_the_still_running_operation`：timeout 交出仍在執行的 future；`sequential_calls_on_a_single_slot_are_never_busy`：op 返回即釋放槽位）、FinalizeUnderPressureTest、chunked digest 測試；Sha256Test `every_public_file_digest_entry_requires_the_nfs_executor`（檔案 digest 只能經執行器）；manifest 有界讀取（`read_from_stream_round_trips`、`oversized_existing_manifest_is_not_a_valid_declaration`） | timeout 槽保留、池滿行為、digest 分塊；未做真實 NAS hang 壓測 |
 | P01-08 | WriteHandleUnavailableTest、FinalizeRetryTest、stat-key error 測試。新契約：finalize 第①步的 flush 屬於寫入，失敗或 timeout → handle 中毒、該次即回 FAILURE(IO)（`flush_timeout_in_finalize_is_immediate_failure_not_pending`、`flush_io_error_in_finalize_is_immediate_failure`）；自 ① fsync 起 timeout／池滿 → PENDING_CONFIRMATION，重呼收斂（`fsync_timeout_is_pending_then_retry_publishes`、`fsync_timeout_then_close_then_retry_still_publishes`、`finalize_when_pool_full_is_pending_confirmation_and_retry_succeeds`） | write IOException 中毒、非 ENOENT 不誤判缺檔 |
 | P01-09 | 本檔、PR、ticket、plan 與 core README | 人工審查及 ticket 最終勾選尚待完成 |
 
@@ -64,6 +65,7 @@ mvn -q -pl gigaxfer-core test
 | 6 | finalize 第①步 flush 失敗或 timeout 先回 PENDING，重呼才 FAILURE（`4c21884`） | flush 屬於寫入：毒化 handle，該次即 FAILURE(IO) | `flush_timeout_in_finalize_is_immediate_failure_not_pending`、`flush_io_error_in_finalize_is_immediate_failure` |
 | 7 | link-key timeout 後舊 link 仍在執行，重試卻判 DECLARATION_EXPIRED 或暫存不在並刪暫存，舊 link 之後落地（`fb128ce`） | timeout 交出 in-flight future；該 identity 的 link 結束前 finalize 一律 PENDING | `timeout_hands_back_the_still_running_operation`、`F1b_link_in_flight_then_declaration_expires_is_pending_until_link_settles`、`F1b_writing_removed_while_link_in_flight_is_pending_until_link_settles` |
 | 8 | 同 identity 兩個 handle 的 link 都在飛時只記得後一個；後一個結束即重跑序列、可能回 FAILURE 並刪暫存（`0f7b293`） | 每個 identity 保存一組 future，於 compute 內原子增刪；任一未結束即 PENDING | `F1b_two_links_in_flight_stays_pending_until_every_link_settles` |
+| 9 | CI（JDK 21）揭露：槽位以 worker 是否閒置計算，`future.get()` 返回時 worker 尚未回池，緊接的下一個 op 被誤判池滿（`87f58f7`） | 槽位改為 Semaphore permit，於 body 返回的 finally 釋放；拿不到 permit 立即 NfsBusy | `sequential_calls_on_a_single_slot_are_never_busy` |
 
 另 `583129f` 同步 system-design HTML 兩版的 finalize 圖說（flush 失敗 → FAILURE；自 fsync 起 timeout → PENDING）。
 
@@ -73,7 +75,7 @@ mvn -q -pl gigaxfer-core test
 
 - **執行環境：** Java 21 runtime 尚未重跑；本次是 JDK 27 編譯至 release 21。PR 尚無 CI。
 - **P13：** 真實 OS／NFSv3 client／NAS 的 fsync 穩定儲存、hard link、failover、長時間掛起與操作所有權語意。
-- **P10：** Policy／容量 WriteGate、Consumer API、指標與 library 打包；F18 不在這 81 個測試內。
+- **P10：** Policy／容量 WriteGate、Consumer API、指標與 library 打包；F18 不在這 82 個測試內。
 - **整個 M1** 尚未驗收；本票只涵蓋 core library。
 - **P09／P14：** 孤兒暫存檔清理、跨 Node E2E、容量與長時間壓測。
 - **既存低優先項：** 大於等於 64 KB 的單次 write 仍是一個 NFS operation；部分 open／close timeout 的 handle 回收依賴 Cleaner；pool 指標由後續整合。這些不因本票開 PR 而視為已解決。
