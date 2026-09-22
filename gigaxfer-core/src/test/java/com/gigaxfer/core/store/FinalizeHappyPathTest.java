@@ -96,12 +96,12 @@ class FinalizeHappyPathTest {
 
     @Test
     void fresh_declaration_is_never_expired_even_if_clock_is_far_ahead_of_mtime() throws Exception {
-        clock.advance(Duration.ofDays(8)); // manifest mtime = 檔案系統的現在；clock 已在 8 天後（> DECLARATION_MAX_AGE）
+        clock.advance(Duration.ofDays(3650)); // manifest mtime = 檔案系統的現在；clock 遠在 10 年後（>> DECLARATION_MAX_AGE，不受真實時鐘漂移影響）
         WriteHandle h = store.beginWrite("mes", "metrology", "FRESH");
         h.stream().write("y".getBytes(StandardCharsets.UTF_8));
 
         assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
-        assertThat(root.resolve("P3/mes/metrology/2026-09-30/08/FRESH")).hasContent("y");
+        assertThat(root.resolve("P3/mes/metrology/2036-09-19/08/FRESH")).hasContent("y");
     }
 
     @Test
