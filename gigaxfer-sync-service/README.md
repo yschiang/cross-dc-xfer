@@ -59,7 +59,7 @@ CD pipeline 把新版本寫成 `candidate.json.tmp` 後 rename 為 `candidate.js
 
 設定 process 內不可變。改 operational policy = CD 放新 candidate 後 `systemctl restart`。
 
-**systemd 與 readiness 的關係（D34 修）**：systemd unit 只監看 process 是否存活（`Type=simple`／`Restart=on-failure` 針對 process 本身，不接 HTTP health check）；`/actuator/health/readiness` 回 DOWN **不會**觸發 systemd 重啟 process——DB 斷線時重啟只會讓新 process 再等一輪重試，沒有幫助。readiness DOWN 的用途是給外部負載平衡 / 監控排除流量或告警，不是重啟訊號。
+**systemd 與 readiness 的關係（D34 修）**：systemd unit 只監看 process 是否存活（`Type=simple`／`Restart=always`、`RestartSec=5`，針對 process 本身，不接 HTTP health check）；`/actuator/health/readiness` 回 DOWN **不會**觸發 systemd 重啟 process——DB 斷線時重啟只會讓新 process 再等一輪重試，沒有幫助。readiness DOWN 的用途是給外部負載平衡 / 監控排除流量或告警，不是重啟訊號。`active.json` 與 `lkg.json` 皆缺、或 `gigaxfer.node` 不在 `policy.nodes` 內時，context 啟動失敗、process 立即退出——`Restart=always` 會讓它進入重啟迴圈，這是預期行為（沒有可用設定就沒有可服務的東西，等重啟不會自己好），ops 需修好 `active.json` 才能讓迴圈停下。
 
 ## DB 斷線復原觀察方式
 
@@ -86,6 +86,8 @@ curl -s localhost:8080/actuator/prometheus | grep -E '^db_health'
 | `GET /actuator/health/liveness` | 無 | process 存活 |
 | `GET /actuator/prometheus` | 無 | 指標；`node` 標籤自動附加 |
 | 其他所有路徑（含 `/pending`、`/file/**`、`/report`、`/received`） | `Authorization: Bearer <token>` | Node 間端點；預設全保護（fail-closed），本模組只提供 filter，端點由 P04 起實作 |
+
+部署假設：`/actuator/**` 不對外開放，只綁內部介面（同主機群 / 內網）——`show-details: always` 會把 `lastError`（DB 最後錯誤訊息）與 NFS root 路徑放進 health 回應本文，曝露給外部即洩漏內部細節。
 
 401 = 無 / 未知 token；403 = `target` 參數與呼叫者身分不同（D14 修 2）。`/received` 不套用 target==caller 規則（只列出 caller 為 Source 的資料列由 P04 實作）。Node 內端點只有豁免清單 `/policy`、`/locate/**`、`/actuator/**`、`/error` 不認證（同主機群、Node 內視為信任邊界內）；其餘路徑一律需要 token。路徑比對用解碼後、去掉 `;` 參數的 application path，`/%70ending`、`/pending;x=1` 等寫法不能繞過。401 帶 `WWW-Authenticate: Bearer`；scheme 名稱大小寫不敏感；403 訊息為常數，不回傳節點名。TLS 由 `server.ssl.*` 部署設定提供（D14），本模組測試走明文；生產環境必須在部署設定啟用 HTTPS，本模組不強制、不驗證。
 

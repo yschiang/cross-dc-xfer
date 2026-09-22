@@ -5,10 +5,10 @@ Ticket: [P02：Node 本地同步服務基礎 #1](https://github.com/yschiang/cro
 ## 基準
 
 - Branch: `p02-sync-service-skeleton`
-- HEAD: 見 git log（最後為 re-review nits：dot-segment fail-closed、RFC 7235 行為測試）
+- HEAD: 見 git log（最後為 final-review fix batch：`6413b34` code + 本批 docs commit）
 - Base（本輪計畫修訂起點）: `72ac972`（docs: P02 plan revision）
 - 上游 P01: `86360ac`
-- Commit 序列：`650e49a` Task1、`6f935a7`+`1617096` Task2、`0f3f916` Task3、`eab8df6`/`83e4ff0`/`7191331` 1R–3R、`62bab04`+`070c2c8` Task4、`0fbe020`+`9c87006` Task5、`99521aa` Task6、`947d789` Task7、`75d9cd2` Task6 fix round 1（審查 H-1：`getRequestURI` 未解碼／含 `;` 可繞過 filter → 改 `UrlPathHelper` 解碼路徑 + 豁免清單預設全保護）。
+- Commit 序列：`650e49a` Task1、`6f935a7`+`1617096` Task2、`0f3f916` Task3、`eab8df6`/`83e4ff0`/`7191331` 1R–3R、`62bab04`+`070c2c8` Task4、`0fbe020`+`9c87006` Task5、`99521aa` Task6、`947d789` Task7、`75d9cd2` Task6 fix round 1（審查 H-1：`getRequestURI` 未解碼／含 `;` 可繞過 filter → 改 `UrlPathHelper` 解碼路徑 + 豁免清單預設全保護）、`a53c4f5` 文件同步 fail-closed 認證行為、`e4bb292` re-review nits（dot-segment fail-closed、RFC 7235 行為測試）、`6413b34` final-review fix batch（health gauge supplier 化、readiness DOWN/UP 斷言、config 缺 active 的 activationFailure、readiness group 加 readinessState、DB query timeout、/policy 不洩漏 operational）+ 本批 docs 更新。
 
 ## 環境
 
@@ -34,8 +34,8 @@ mvn test
 | 模組 | 測試數 | Failures | Errors |
 | --- | --- | --- | --- |
 | gigaxfer-core | 85 | 0 | 0 |
-| gigaxfer-sync-service | 54 | 0 | 0 |
-| 合計 | 139 | 0 | 0 |
+| gigaxfer-sync-service | 55 | 0 | 0 |
+| 合計 | 140 | 0 | 0 |
 
 （測試類別清單：核對用 `grep -rn "void " gigaxfer-*/src/test` 取實際方法名，下表逐 AC 列出對應項。）
 
