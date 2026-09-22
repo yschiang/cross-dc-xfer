@@ -1,11 +1,16 @@
 package com.gigaxfer.core.manifest;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.gigaxfer.core.identity.FileIdentity;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -67,6 +72,44 @@ class ManifestCodecTest {
     void missing_schema_version_is_malformed() {
         String s = new String(codec.encode(m), StandardCharsets.UTF_8).replace("\"schema_version\":1,", "");
         assertThatThrownBy(() -> codec.decode(s.getBytes(StandardCharsets.UTF_8))).isInstanceOf(MalformedManifestException.class);
+    }
+
+    static Stream<String> requiredFields() {
+        return Stream.of("schema_version", "source_node", "namespace", "data_class", "logical_key", "size",
+            "digest", "uuid", "source_ready_at", "content_path");
+    }
+
+    /** 固定 wire schema 的十個欄位逐一驗證；任何欄位缺席都不是可向前相容的宣告。 */
+    @ParameterizedTest
+    @MethodSource("requiredFields")
+    void every_required_field_must_be_present(String field) throws Exception {
+        ObjectNode json = (ObjectNode) new ObjectMapper().readTree(codec.encode(m));
+        json.remove(field);
+        assertThatThrownBy(() -> codec.decode(json.toString().getBytes(StandardCharsets.UTF_8)))
+            .as(field)
+            .isInstanceOf(MalformedManifestException.class);
+    }
+
+    @ParameterizedTest
+    @MethodSource("primitiveFields")
+    void primitive_fields_must_not_be_null(String field) throws Exception {
+        ObjectNode json = (ObjectNode) new ObjectMapper().readTree(codec.encode(m));
+        json.putNull(field);
+        assertThatThrownBy(() -> codec.decode(json.toString().getBytes(StandardCharsets.UTF_8)))
+            .as(field)
+            .isInstanceOf(MalformedManifestException.class);
+    }
+
+    static Stream<String> primitiveFields() {
+        return Stream.of("schema_version", "size");
+    }
+
+    @Test
+    void unknown_field_is_malformed() throws Exception {
+        ObjectNode json = (ObjectNode) new ObjectMapper().readTree(codec.encode(m));
+        json.put("future_field", "must not be ignored");
+        assertThatThrownBy(() -> codec.decode(json.toString().getBytes(StandardCharsets.UTF_8)))
+            .isInstanceOf(MalformedManifestException.class);
     }
 
     /** 型別不符也是損壞：不得把 "12" 或 1.5 強制轉成 size。 */

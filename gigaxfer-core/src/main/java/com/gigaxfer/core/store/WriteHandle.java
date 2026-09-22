@@ -3,6 +3,7 @@ package com.gigaxfer.core.store;
 import com.gigaxfer.core.digest.Sha256;
 import com.gigaxfer.core.identity.FileIdentity;
 import com.gigaxfer.core.manifest.Manifest;
+import com.gigaxfer.core.manifest.MalformedManifestException;
 import com.gigaxfer.core.nfs.NfsBusyException;
 import com.gigaxfer.core.nfs.NfsException;
 import com.gigaxfer.core.nfs.NfsTimeoutException;
@@ -31,6 +32,14 @@ import java.util.UUID;
 public final class WriteHandle implements AutoCloseable {
     private static final int BUFFER = 64 * 1024;
 
+    private enum Lifecycle {
+        WRITING,
+        FINALIZING,
+        FINALIZED,
+        DISCARDED,
+        FAILED
+    }
+
     private final LocalStore store;
     private final FileIdentity id;
     private final String dataClass;
@@ -41,9 +50,8 @@ public final class WriteHandle implements AutoCloseable {
     private final OutputStream stream;
     private long size;
     private String digest; // 第①步 fsync 後固定，之後不再改（IR-01）
-    private boolean discarded;
-    private boolean failed;
-    private String failedOp;
+    private volatile Lifecycle lifecycle = Lifecycle.WRITING;
+    private volatile String failedOp;
 
     WriteHandle(LocalStore store, FileIdentity id, String dataClass, UUID uuid, Path writing, FileChannel channel) {
         this.store = store;
@@ -56,28 +64,28 @@ public final class WriteHandle implements AutoCloseable {
         // SUCCESS 後的位元組先進緩衝、下次 flush 再寫進已發布的 inode。
         this.stream = new java.io.BufferedOutputStream(new ChannelStream(), BUFFER) {
             @Override
-            public void write(int b) throws IOException {
+            public synchronized void write(int b) throws IOException {
                 requireWritable();
                 super.write(b);
             }
 
             @Override
-            public void write(byte[] b, int off, int len) throws IOException {
+            public synchronized void write(byte[] b, int off, int len) throws IOException {
                 requireWritable();
                 super.write(b, off, len);
             }
         };
     }
 
-    /**
-     * digest 固定（第①步 fsync 成功）後內容就定案：之後的 link 會把「這個 inode」發布成正式檔，
-     * 任何再寫進來的位元組都會改寫正式內容而 manifest digest 不變（P01-04、P01-08）。
-     * 拒寫不毒化 handle：已發布的結果仍是 SUCCESS。
-     */
+    /** Finalize 一開始就凍結內容；守衛在 Application 拿到的外層 stream，連小寫入也不會進 buffer。 */
     private void requireWritable() throws IOException {
-        if (discarded) throw new IOException("handle discarded");
-        if (failed) throw new IOException("handle failed");
-        if (digest != null) throw new IOException("handle finalized; content is fixed at " + digest);
+        switch (lifecycle) {
+            case WRITING -> { }
+            case FINALIZING -> throw new IOException("handle is finalizing; content is fixed");
+            case FINALIZED -> throw new IOException("handle finalized; content is fixed at " + digest);
+            case DISCARDED -> throw new IOException("handle discarded");
+            case FAILED -> throw new IOException("handle failed at " + failedOp);
+        }
     }
 
     public FileIdentity identity() {
@@ -98,8 +106,13 @@ public final class WriteHandle implements AutoCloseable {
 
     /** 只允許 Finalize 前（CONTEXT.md Discard）。write 失敗（poisoned）後仍允許。 */
     public void discard() throws IOException {
-        if (digest != null) throw new IllegalStateException("cannot discard after finalize started");
-        discarded = true;
+        synchronized (stream) {
+            if (lifecycle == Lifecycle.FINALIZING || lifecycle == Lifecycle.FINALIZED) {
+                throw new IllegalStateException("cannot discard after finalize started");
+            }
+            if (lifecycle == Lifecycle.DISCARDED) return;
+            lifecycle = Lifecycle.DISCARDED;
+        }
         try {
             store.nfs.run("discard-writing", () -> {
                 channel.close();
@@ -124,8 +137,13 @@ public final class WriteHandle implements AutoCloseable {
      * "finalize()" 是編譯錯誤（回傳型別不可替代 Object.finalize() 的 void）。
      */
     public FinalizeResult finalizeWrite() {
-        if (failed) return poisoned();
-        if (discarded) return new FinalizeResult.Failure(FailureReason.IO, "handle discarded");
+        synchronized (stream) {
+            if (lifecycle == Lifecycle.FAILED) return poisoned();
+            if (lifecycle == Lifecycle.DISCARDED) {
+                return new FinalizeResult.Failure(FailureReason.IO, "handle discarded");
+            }
+            if (lifecycle == Lifecycle.WRITING) lifecycle = Lifecycle.FINALIZING;
+        }
         // 先前送出的 link（任一個）還沒結束：NAS 上的結果未定，任何結論（EXPIRED、暫存不在、CONFLICT 以外的 FAILURE）
         // 都可能被它稍後推翻。全部結束後照原序列重跑——那時 stat-key 看到的就是確定的結果。
         if (store.linkInFlight(id)) return new FinalizeResult.PendingConfirmation("link-key", "earlier link still in flight");
@@ -170,7 +188,7 @@ public final class WriteHandle implements AutoCloseable {
             Instant declaredAt = store.clock.instant();
             Path myContentDir = store.layout.contentDir(id, dataClass, declaredAt);
             Manifest mine = new Manifest(Manifest.SCHEMA_VERSION, id.sourceNode(), id.namespace(), dataClass, id.logicalKey(),
-                size, digest, uuid.toString(), declaredAt, store.layout.toContentPath(myContentDir.resolve(id.logicalKey())));
+                size, digest, uuid.toString(), declaredAt, store.layout.expectedContentPath(id, dataClass, declaredAt));
             byte[] bytes = store.codec.encode(mine);
             store.nfs.run("write-manifest-tmp", () -> {
                 Files.createDirectories(manifestPath.getParent());
@@ -189,11 +207,7 @@ public final class WriteHandle implements AutoCloseable {
                 declared = mine;
             } catch (FileAlreadyExistsException e) {
                 preexisting = true;
-                declared = store.nfs.call("read-manifest", () -> {
-                    try (InputStream in = Files.newInputStream(manifestPath)) {
-                        return store.codec.read(in); // 有上限，不整檔配置
-                    }
-                });
+                declared = store.nfs.call("read-manifest", () -> readManifest(manifestPath));
                 if (!declared.sameDeclaration(id, dataClass, size, digest)) {
                     cleanupTemps();
                     return new FinalizeResult.Failure(FailureReason.CONFLICT,
@@ -247,7 +261,7 @@ public final class WriteHandle implements AutoCloseable {
 
             // ④
             cleanupTemps();
-            return new FinalizeResult.Success(id, declared.contentPath());
+            return success(declared.contentPath());
 
         } catch (NfsException e) {
             return new FinalizeResult.PendingConfirmation(e.op(),
@@ -260,8 +274,24 @@ public final class WriteHandle implements AutoCloseable {
 
     /** 寫入（含 finalize 第①步的 flush）失敗過的 handle：內容不可信，永不發布。 */
     private FinalizeResult poisoned() {
+        lifecycle = Lifecycle.FAILED;
         cleanupTemps();
         return new FinalizeResult.Failure(FailureReason.IO, "stream failed at " + failedOp);
+    }
+
+    /** 固定 schema 解碼後，再以本 store 的 PathLayout 時區驗證精確正式路徑。 */
+    private Manifest readManifest(Path manifestPath) throws IOException {
+        Manifest declared;
+        try (InputStream in = Files.newInputStream(manifestPath)) {
+            declared = store.codec.read(in); // 有上限，不整檔配置
+        }
+        String expected = store.layout.expectedContentPath(
+            declared.identity(), declared.dataClass(), declared.sourceReadyAt());
+        if (!expected.equals(declared.contentPath())) {
+            throw new MalformedManifestException(
+                "content_path " + declared.contentPath() + " != expected " + expected);
+        }
+        return declared;
     }
 
     /** 重試路徑的當下證據（D44）：重讀 &lt;key&gt; 算 digest 對 manifest。 */
@@ -271,7 +301,12 @@ public final class WriteHandle implements AutoCloseable {
         if (!actual.equals(declared.digest())) {
             return new FinalizeResult.Failure(FailureReason.CONFLICT, "published content " + actual + " != declared " + declared.digest());
         }
-        return new FinalizeResult.Success(id, declared.contentPath());
+        return success(declared.contentPath());
+    }
+
+    private FinalizeResult.Success success(String contentPath) {
+        lifecycle = Lifecycle.FINALIZED;
+        return new FinalizeResult.Success(id, contentPath);
     }
 
     private void cleanupTemps() {
@@ -311,20 +346,19 @@ public final class WriteHandle implements AutoCloseable {
 
         @Override
         public void write(byte[] b, int off, int len) throws IOException {
-            requireWritable(); // 第二道：flush 也經這裡
             ByteBuffer buf = ByteBuffer.wrap(b, off, len);
             try {
                 store.nfs.run("write", () -> {
                     while (buf.hasRemaining()) channel.write(buf);
                 });
             } catch (NfsException e) {
-                failed = true;
+                lifecycle = Lifecycle.FAILED;
                 failedOp = e.op();
                 throw new NfsUnavailableException(e.op(), e);
             } catch (Exception e) {
                 // ENOSPC / EDQUOT / EIO / ESTALE 等一般 IOException 也必須毒化 handle：
                 // md 與 size 沒更新，落盤位元組已與宣告不一致，不能讓 finalizeWrite() 回 Success。
-                failed = true;
+                lifecycle = Lifecycle.FAILED;
                 failedOp = "write";
                 if (e instanceof IOException io) throw io;
                 if (e instanceof RuntimeException re) throw re;

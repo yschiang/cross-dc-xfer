@@ -50,6 +50,20 @@ class FinalizeRetryTest {
         assertThat(root.resolve("P3/mes/metrology/2026-09-22/08/R1")).hasContent("retry");
     }
 
+    /** Finalize 一開始內容就凍結；fsync 結果未知時也不能再讓小寫入停在外層 buffer。 */
+    @Test
+    void writes_are_rejected_after_finalize_starts_even_before_digest_is_fixed() throws Exception {
+        WriteHandle h = store.beginWrite("mes", "metrology", "R0");
+        h.stream().write("retry".getBytes(StandardCharsets.UTF_8));
+        nfs.dropBefore("fsync-writing");
+
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
+        assertThatThrownBy(() -> h.stream().write('x')).isInstanceOf(IOException.class);
+
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
+        assertThat(root.resolve("P3/mes/metrology/2026-09-22/08/R0")).hasContent("retry");
+    }
+
     /** close() 後 PendingConfirmation 的重試仍要收斂：重開 writing 完成 fsync，不能把暫存刪掉。 */
     @Test
     void fsync_timeout_then_close_then_retry_still_publishes() throws Exception {

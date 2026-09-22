@@ -29,7 +29,7 @@ public final class ManifestCodec {
     private final ObjectMapper mapper = JsonMapper.builder()
         .addModule(new JavaTimeModule())
         .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
-        .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+        .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
         // 固定 schema：record 的每個欄位都必填。沒有這三項時 Jackson 對缺席或 null 的 primitive
         // 補 0，並把 "12"、1.5 強制轉成 long——缺 size 的損壞宣告會被當成 size=0 的有效宣告（P01-03）。
         .enable(DeserializationFeature.FAIL_ON_MISSING_CREATOR_PROPERTIES)

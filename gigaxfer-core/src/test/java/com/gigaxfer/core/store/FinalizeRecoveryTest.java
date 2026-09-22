@@ -214,6 +214,22 @@ class FinalizeRecoveryTest {
         assertThat(root.resolve(key08)).doesNotExist();
     }
 
+    /** content_path 的 day/hour 也必須由 source_ready_at 經 PathLayout 時區精確推導。 */
+    @Test
+    void declared_content_path_at_wrong_ready_hour_is_not_published() throws Exception {
+        Manifest forged = new Manifest(Manifest.SCHEMA_VERSION, "P3", "mes", "metrology", "L1", content.length,
+            Sha256.ofBytes(content), "11111111-2222-3333-4444-555555555555", clock.instant(),
+            "P3/mes/metrology/2026-09-22/09/L1");
+        Files.createDirectories(layout.manifestDir(id));
+        Files.write(layout.manifestPath(id), store.codec.encode(forged));
+
+        FinalizeResult r = write(content).finalizeWrite();
+
+        assertThat(r).isInstanceOf(FinalizeResult.Failure.class);
+        assertThat(root.resolve("P3/mes/metrology/2026-09-22/09/L1")).doesNotExist();
+        assertThat(root.resolve(key08)).doesNotExist();
+    }
+
     /** 既有 manifest 超過上限（此例 1 MB，JSON 仍可解析）視為損壞宣告：不得回 SUCCESS。 */
     @Test
     void oversized_existing_manifest_is_not_a_valid_declaration() throws Exception {

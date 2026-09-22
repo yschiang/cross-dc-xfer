@@ -42,6 +42,11 @@ public final class PathLayout {
             .resolve(DAY.format(t)).resolve(HOUR.format(t));
     }
 
+    /** 由 manifest 的 identity、Data class 與 Source Ready 時刻唯一推導出的相對正式路徑。 */
+    public String expectedContentPath(FileIdentity id, String dataClass, Instant sourceReadyAt) {
+        return toContentPath(contentDir(id, dataClass, sourceReadyAt).resolve(id.logicalKey()));
+    }
+
     public Path manifestDir(FileIdentity id) {
         return root.resolve(id.sourceNode()).resolve(id.namespace()).resolve(MANIFEST_DIR).resolve(bucket(id.logicalKey()));
     }

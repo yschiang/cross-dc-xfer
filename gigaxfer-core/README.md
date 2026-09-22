@@ -23,10 +23,10 @@ switch (r) {
 規則：
 
 1. Logical key 對不同內容唯一（含 run id / timestamp）；不得以 `.writing`、`.tmp` 結尾或含 `.manifest`，否則 `beginWrite()` 在碰 NFS 前就丟 `IllegalArgumentException`。
-2. `finalizeWrite()` 回 `Success` 才 commit 業務交易；`PendingConfirmation` 重呼同一 handle 的 `finalizeWrite()` 直到確定；`Failure` 視為交易失敗。`finalizeWrite()` 第①步 fsync 成功、digest 固定後內容即定案：之後 `stream()` 的任何寫入（含 `flush`）都丟 `IOException`，但不毒化 handle——已發布的結果重呼仍是 `Success`。內部關通道失敗也不留下可改寫正式檔的路徑（通道只有 `stream()` 寫得到）。
+2. `finalizeWrite()` 回 `Success` 才 commit 業務交易；`PendingConfirmation` 重呼同一 handle 的 `finalizeWrite()` 直到確定；`Failure` 視為交易失敗。第一次呼叫 `finalizeWrite()` 時內容立即定案：之後 `stream()` 的任何寫入都在外層入口丟 `IOException`，連小寫入也不會先進 buffer。這包含 fsync 尚未回覆、close 失敗及已回 `Success` 的狀態；被拒寫不會把 handle 毒化，重呼仍沿原 Finalize 序列收斂。
 3. **Handle 中毒（poisoned）**：`stream().write(...)` 只要失敗，handle 就從此中毒——池滿／timeout 丟 `NfsUnavailableException`（`IOException` 子類），其餘寫入失敗（ENOSPC、EDQUOT、EIO、ESTALE…）原樣丟出該 `IOException`。`finalizeWrite()` 內部第①步的 `stream.flush()` 也屬於寫入：flush 失敗或池滿／timeout 同樣毒化 handle，**該次** `finalizeWrite()` 就直接回 `Failure(IO, "stream failed at " + <op>)`（不先回 `PendingConfirmation`），之後每次呼叫也一樣，不再碰 NFS、不宣告並清掉暫存。Application 必須把這視為交易失敗、拋棄此 handle、用新的 `beginWrite()` 重來——這是安全的，因為 commit point（③ link-key）從未被踩到。只有 flush 之後的純 NFS 操作（fsync 起：fsync、manifest、link 等，不經 `stream()`）池滿或 timeout 才回 `PendingConfirmation`，handle 不中毒，重呼 `finalizeWrite()` 會照原序列重試（`FinalizeRetryTest`、`FinalizeUnderPressureTest` 第三個案例）。
 4. 交易重跑直接 `beginWrite` + `finalizeWrite`，冪等保證不重複；不需先查。
-5. `discard()` 只允許在 digest 尚未固定前呼叫，也就是 `finalizeWrite()` 第①步 fsync 尚未成功完成之前（之後丟 `IllegalStateException`）；write 失敗（poisoned）或第①步 fsync 因池滿/timeout 回 `PendingConfirmation`（digest 仍未固定）時仍允許 discard。
+5. `discard()` 只允許在第一次 `finalizeWrite()` 呼叫前；Finalize 已開始後（包含 `PendingConfirmation`）丟 `IllegalStateException`。write 失敗而中毒、但尚未開始 Finalize 的 handle 仍可 discard。
 6. `close()` 只關通道；即使在 `PendingConfirmation` 後 `close()`，重呼 `finalizeWrite()` 仍會收斂（library 會重新開啟暫存檔完成 fsync）。try-with-resources 可用，但 `PendingConfirmation` 的重試必須用同一個 handle。`close()` 經 NFS 執行器，可能丟 `NfsUnavailableException`；用 try-with-resources 時要注意雙重故障（double fault）：若 `stream().write` 先丟出例外、`close()` 又因池滿/timeout 再丟一次，Java 標準語意（JLS 14.20.3）是把 try 區塊（write）的例外當主要例外拋出，`close()` 的例外被鏈到 `getSuppressed()`——呼叫端若只看主例外型別，可能忽略 close() 那一份診斷資訊（例如 close 當下 NFS 也在池滿），必要時檢查 suppressed exceptions。
 7. **`WriteHandle` 單執行緒使用，不可跨執行緒共用**（內部 digest／size／poisoned 旗標都沒有同步）；`PendingConfirmation` 的重試也要在同一執行緒上用同一個 handle。
 8. `beginWrite()` 的 `namespace`、`dataClass`、`logicalKey` 都直接成為路徑片段：空字串、以 `.` 開頭（含 `..`）、含 `/` 或 `\0` 一律在碰 NFS 前丟 `IllegalArgumentException`。
@@ -49,13 +49,15 @@ switch (r) {
 
 `.manifest/` 前綴避免與剛好 3 個 hex 字元的 Data class 撞名；`bucket` 只由 `logicalKey` 的 SHA-256 前 3 hex 字元決定（`PathLayout.bucket`）。目錄日期／小時用 `PathLayout` 建構時指定的時區（預設應為 Node 本地時區；參與同步的所有 Node 須同一時區設定）。
 
+Manifest 是固定 10 欄 schema：缺欄、null primitive、多餘欄位、型別不符、超過 16 KiB 都視為 malformed。既有 manifest 的 `content_path` 必須精確等於由 identity、Data class、`source_ready_at` 與 `PathLayout` 時區推導的路徑；讀取在 NFS executor 內以 16 KiB 上限串流完成。
+
 ## 測試
 
 `mvn -q -pl gigaxfer-core test`。故障窗口對照 `docs/design/system-design.md` §6（測試方法名以窗口編號開頭）：
 
 | 窗口 | 測試 |
 | --- | --- |
-| F1b | `FinalizeRecoveryTest.F1b_writing_file_removed_before_link_is_failure_not_pending`、`F1b_link_in_flight_then_declaration_expires_is_pending_until_link_settles`、`F1b_writing_removed_while_link_in_flight_is_pending_until_link_settles`、`F1b_two_links_in_flight_stays_pending_until_every_link_settles`（link-key timeout 後舊 link 仍在執行：同 identity 的每個在飛 link 都結束前一律 `PendingConfirmation`，不判年齡、不刪暫存） |
+| F1b | `FinalizeRecoveryTest.F1b_writing_file_removed_before_link_is_failure_not_pending`、三個 in-flight 交錯測試，以及 `LinkOwnershipWithBoundedExecutorTest.retry_keeps_real_timed_out_link_ownership_until_worker_finishes`（production executor 中的 link-key timeout 後，同 identity 的每個在飛 link 都結束前一律 `PendingConfirmation`，不判年齡、不刪暫存、不另發 link） |
 | F2 | `FinalizeRecoveryTest.F2_link_not_sent_then_retry_publishes` |
 | F2b | `FinalizeRecoveryTest.F2b_retry_after_declaration_older_than_7_days_is_expired` |
 | F3 | `FinalizeRecoveryTest.F3_link_done_but_reply_lost_then_retry_is_success_without_duplicate` |
