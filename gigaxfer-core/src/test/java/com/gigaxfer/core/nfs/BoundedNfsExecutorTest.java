@@ -41,8 +41,17 @@ class BoundedNfsExecutorTest {
 
             release.countDown();
             assertThat(finished.await(1, TimeUnit.SECONDS)).isTrue();
-            Thread.sleep(20); // 讓 worker 回到 idle
-            assertThat(nfs.call("after", () -> 7)).isEqualTo(7);
+            // 輪詢到槽位真的可再提交為止（getActiveCount() 歸零早於 worker 回到 SynchronousQueue）
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+            Integer after = null;
+            while (after == null && System.nanoTime() < deadline) {
+                try {
+                    after = nfs.call("after", () -> 7);
+                } catch (NfsBusyException e) {
+                    Thread.sleep(1);
+                }
+            }
+            assertThat(after).isEqualTo(7);
         }
     }
 

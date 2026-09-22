@@ -16,14 +16,14 @@ class ManifestCodecTest {
         "sha256:" + "ab".repeat(32), "11111111-2222-3333-4444-555555555555",
         Instant.parse("2026-09-22T08:15:03.123Z"), "P3/mes/metrology/2026-09-22/08/L123-R2");
 
+    /** 整行釘住：欄位順序、snake_case 名稱、欄位集合（恰 10 欄，無多餘）與結尾換行都是 wire format。 */
     @Test
-    void encodes_single_line_snake_case_json() {
-        String s = new String(codec.encode(m), StandardCharsets.UTF_8);
-        assertThat(s).endsWith("\n");
-        assertThat(s.substring(0, s.length() - 1)).doesNotContain("\n");
-        assertThat(s).contains("\"schema_version\":1").contains("\"source_node\":\"P3\"").contains("\"data_class\":\"metrology\"")
-            .contains("\"logical_key\":\"L123-R2\"").contains("\"source_ready_at\":\"2026-09-22T08:15:03.123Z\"")
-            .contains("\"content_path\":\"P3/mes/metrology/2026-09-22/08/L123-R2\"");
+    void encodes_exactly_one_snake_case_json_line() {
+        assertThat(new String(codec.encode(m), StandardCharsets.UTF_8)).isEqualTo(
+            "{\"schema_version\":1,\"source_node\":\"P3\",\"namespace\":\"mes\",\"data_class\":\"metrology\","
+                + "\"logical_key\":\"L123-R2\",\"size\":1048576,\"digest\":\"sha256:" + "ab".repeat(32) + "\","
+                + "\"uuid\":\"11111111-2222-3333-4444-555555555555\",\"source_ready_at\":\"2026-09-22T08:15:03.123Z\","
+                + "\"content_path\":\"P3/mes/metrology/2026-09-22/08/L123-R2\"}\n");
     }
 
     @Test

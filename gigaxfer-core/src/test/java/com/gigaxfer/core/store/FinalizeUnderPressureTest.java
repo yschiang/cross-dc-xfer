@@ -12,6 +12,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -73,8 +74,13 @@ class FinalizeUnderPressureTest {
             assertThat(r).isInstanceOf(FinalizeResult.PendingConfirmation.class);
             assertThat(((FinalizeResult.PendingConfirmation) r).op()).isEqualTo("fsync-writing");
             release.countDown();
-            Thread.sleep(50);
-            assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
+            // 重試到收斂為止，別靠固定 sleep 猜槽位何時釋放
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+            FinalizeResult second;
+            do {
+                second = h.finalizeWrite();
+            } while (second instanceof FinalizeResult.PendingConfirmation && System.nanoTime() < deadline);
+            assertThat(second).isInstanceOf(FinalizeResult.Success.class);
             assertThat(root.resolve("P3/mes/metrology/2026-09-22/08/L1")).hasSize(128 * 1024);
         }
     }
