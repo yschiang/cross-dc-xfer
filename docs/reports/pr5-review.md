@@ -132,3 +132,24 @@ P02 偏差 ⑥ 明列了 `received.data_class` 是實作新增，但 `received.c
 | P02-10 Node 認證 | ✅ supported | 行為全部有覆蓋（401 無/未知 token、非 Bearer、bearer 大小寫、`WWW-Authenticate`、403 不洩漏節點名、`/file/**` 子路徑、`;` 參數與 `%70` 編碼繞過、dot-segment fail-closed）。小出入：紀錄寫「`NodeAuthFilterTest`（10 個測試）」，實際是 12 個（多了 `lowercase_bearer_scheme_is_accepted` 與 `unauthorized_response_carries_www_authenticate_and_forbidden_hides_node_names`）。 |
 | P02-11 角色身分 | ⚠️ partially | 三個引用的測試都成立，但它們打的是**測試專用**的 `EchoCallerController`（`src/test/.../auth/EchoCallerController.java`）。production 端目前只有 filter 把 caller 放進 request attribute，`CallerIdentity.requireTarget` 沒有任何 production 呼叫點；`/received` 只回「caller 為 Source 的列」也明確留給 P04。也就是說 P02-11 驗到的是「契約工具可用」，不是「端點遵守契約」。紀錄備註有提到 P04，但「通過」這個結論偏樂觀。 |
 | P02-12 可交接可重現 | ✅ supported | README 涵蓋首次初始化、更新/回退、DB 斷線觀察、curl 範例、指標範例、HTTPS 要求；`mvn test` 175/175 本機重現成功。唯一與事實不符的是 README「`/actuator/**` 不對外開放，只綁內部介面」這句（見建議 #1），在目前單一 port 的設定下做不到。 |
+
+
+---
+
+## Scoped re-review（sonnet，對 fix commit `a9c309d`）
+
+# PR #5 Re-review — 必修三項複查
+
+- 必修 1（byte caps）：✅ addressed — `FileIdentity` 新增 `MAX_NODE_BYTES=64`／`MAX_NAMESPACE_BYTES=128`／`MAX_DATA_CLASS_BYTES=128`／`MAX_LOGICAL_KEY_BYTES=512`，與 `V1__schema.sql` 的 `VARCHAR(64)`/`VARCHAR(128)`/`VARCHAR(128)`/`VARCHAR(512)` 逐一核對相符。四個入口都已接上：`beginWrite`（`LocalStore.java:73-74`，經 `FileIdentity` 建構子驗 sourceNode/namespace/logicalKey，另外呼叫 `requireSegment` 驗 dataClass）、config（`ConfigCodec.java` 的 `policy.nodes`/`policy.namespaces`/`required_targets.source_node`/`required_targets.data_class` 皆帶對應 maxBytes）、manifest（`ManifestCodec.java:75` 驗 data_class）。`content_path` 未另加程式檢查，但採用「由片段上限推得 849 < 1024」的方案，計算正確（64+128+128+10+2+512+5=849）。邊界測試確實驗了 byte vs char 語意：`FileIdentityTest.segment_limits_are_utf8_bytes_matching_schema_widths` 用 512 個 ASCII 字元（通過）、513 個（拒絕）、171 個中文字（513 bytes、171 字元，仍拒絕），另加 `SchemaTest.identity_column_widths_match_core_segment_limits` 在 DB 層插入 512-byte key 成功、513-byte 失敗（`DataIntegrityViolationException`）。全庫 grep `requireSegment(` 確認所有呼叫端（含測試碼）都已改用三參數版本，無殘留的舊雙參數呼叫。
+
+- 必修 2（candidate 啟用不重讀）：✅ addressed — `ConfigStore.load()` 現在直接用 `validateCandidate(...)` 回傳的已解碼 `NodeConfig accepted`，第二次 `Files.readAllBytes(candidate)` 已刪除；`validateCandidate` 改為驗證通過即回傳解碼物件、失敗則丟 `InvalidConfigException`。舊的「candidate validated a moment ago」死分支 `IllegalStateException` 已整段移除。catch 區塊只 `catch (InvalidConfigException e)`（`ConfigStore.java:63`），是 `IOException` 的子型別但用型別窄化的 catch子句，故 `validateCandidate` 內部 `Files.readAllBytes` 若拋出**非** `InvalidConfigException` 的一般 `IOException`（如磁碟錯誤），不會被這個 catch 攔到，會直接往外傳出 `load()`，不會被誤判成「candidate 被拒絕」；`Files.move` 拋出的 `IOException` 同理不受影響。
+
+- 必修 3（成功路徑保留 failure）：✅ addressed — 第 62 行成功路徑改為 `return new ConfigActivation(accepted, ConfigActivation.Source.ACTIVE, failure)`，不再固定回 `Optional.empty()`；`failure` 由第 39-45 行依 active.json 缺/損毀狀態設定，並沿用到 candidate 啟用成功的分支。測試 `corrupt_active_does_not_overwrite_good_lkg_when_candidate_activates` 已新增 `assertThat(a.activationFailure()).hasValueSatisfying(r -> assertThat(r).contains("active.json unreadable"))` 斷言。
+
+## 新問題
+
+（無）
+
+- 正常路徑迴歸檢查：active 存在且合法、candidate 也合法時，`failure` 從初始化就是 `Optional.empty()`（因為 `current.isPresent()` 為真，不會進入第 41-45 行的賦值），成功路徑回傳的 `failure` 仍是空值，行為與修改前相同；對應測試 `assertThat(a.activationFailure()).isEmpty()` 仍然成立。原本啟用成功分支恆為 `ACTIVE` 的死變數 `source` 已被直接刪除、下方 `current.isPresent()` 分支改為寫死 `ConfigActivation.Source.ACTIVE`，與刪除前的實際行為一致（此變數原本在該分支下必為 ACTIVE），不構成行為變更。`InvalidConfigException` 建構子支援 `(String, Throwable)`，`validateCandidate` 包裝原始例外的寫法可正常編譯。
+
+CLEAN
