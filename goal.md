@@ -47,15 +47,15 @@
 - 機器是 **arm64 Mac，沒有 Rosetta**。`/usr/local`（Intel brew）下的 `openjdk@17`、`maven`、`git` 全是 x86_64，執行會 `Bad CPU type in executable`。
 - `/opt/homebrew`（arm brew）存在。**允許**執行：
   ```
-  /opt/homebrew/bin/brew install openjdk@21 maven git
+  /opt/homebrew/bin/brew install openjdk maven git
   ```
   不需要 sudo；若已安裝就跳過。不得改系統 PATH 或 shell rc 檔。
 - 之後每個 Bash 呼叫前置：
   ```
-  export JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home
+  export JAVA_HOME=/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home
   export PATH=/opt/homebrew/bin:$JAVA_HOME/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH
   ```
-  驗證：`java -version` 顯示 21 且 `file $(which java)` 為 arm64；`mvn -version` 正常；`which git` 為 `/opt/homebrew/bin/git` 或 `/usr/bin/git`。
+  驗證：`java -version` 至少 21（本機目前是 27）且 `file $(which java)` 為 arm64；pom 的編譯目標固定 release 21，Java 21 runtime 由 CI（Temurin 21）驗證，本機不另裝 21；`mvn -version` 正常；`which git` 為 `/opt/homebrew/bin/git` 或 `/usr/bin/git`。
 - superpowers 的 `scripts/sdd-workspace`、`task-brief`、`review-package` 在 PATH 修好後才能跑（它們之前因 `/usr/local/bin/git` 失敗）。派出的 subagent 也要在 prompt 裡帶上同一段 export。
 
 ## 已裁定的事（不要再問）

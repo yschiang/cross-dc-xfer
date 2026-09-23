@@ -3,6 +3,7 @@
 # 每個還沒審過的 PR head 開一個全新行程的 reviewer，輸出原樣貼成 PR 留言。
 #
 #   scripts/review-patrol.sh            跑一輪
+#   scripts/review-patrol.sh <PR 編號>  只巡這一個 PR
 #   scripts/review-patrol.sh --loop     每 INTERVAL 秒一輪（預設 900）
 #   DRY_RUN=1 scripts/review-patrol.sh  只印要審哪些 PR，不叫 reviewer、不留言
 #
@@ -27,12 +28,19 @@ run_reviewer() { # $1 工作目錄  $2 prompt 檔  $3 輸出檔
   esac
 }
 
+current_wt=
+cleanup() { # 拋棄式 worktree 不論成功或中斷都刪掉
+  [ -n "$current_wt" ] && git -C "$repo_root" worktree remove --force "$current_wt" 2>/dev/null || true
+  current_wt=
+}
+trap cleanup EXIT
+
 review_pr() { # $1 PR 編號  $2 head sha  $3 輪次
   local pr=$1 head=$2 round=$3
   local wt; wt=$(mktemp -d "${TMPDIR:-/tmp}/gigaxfer-review-$pr.XXXX")
   git fetch -q origin "pull/$pr/head"
   git worktree add -q --detach "$wt" "$head"
-  trap 'git -C "$repo_root" worktree remove --force "$wt" 2>/dev/null || true' RETURN
+  current_wt=$wt
 
   # reviewer 不需要 GitHub 權限：材料先放進拋棄式 worktree 的 .review/
   mkdir -p "$wt/.review"
@@ -41,11 +49,11 @@ review_pr() { # $1 PR 編號  $2 head sha  $3 輪次
   gh pr view "$pr" --json reviews,comments \
     --jq '[.reviews[], .comments[]] | sort_by(.submittedAt // .createdAt) | .[] | "---- \(.author.login) \(.submittedAt // .createdAt)\n\(.body)\n"' \
     > "$wt/.review/history.md"
-  local ticket; ticket=$(gh pr view "$pr" --json body --jq '.body | capture("(?i)closes #(?<n>[0-9]+)").n' 2>/dev/null || true)
+  local ticket; ticket=$(gh pr view "$pr" --json body --jq '.body | capture("(?i)\\b(close[sd]?|fix(e[sd])?|resolve[sd]?|refs?)\\s+#(?<n>[0-9]+)").n' 2>/dev/null || true)
   [ -n "$ticket" ] && gh issue view "$ticket" > "$wt/.review/ticket.md"
 
   cat > "$wt/.review/prompt.md" <<PROMPT
-你是這個 repo 的 senior reviewer，審 PR #$pr 第 $round 輪，head $head。
+你是這個 repo 的 senior reviewer，審 PR #${pr} 第 ${round} 輪，head ${head}。
 目前目錄是這個 head 的拋棄式 checkout。不要 commit、不要 push、不要改原始碼；跑測試產生的建置檔可以。
 
 1. 讀 reviewer.md 的「審查標準」與「留言格式」兩節，照做。
@@ -55,7 +63,7 @@ review_pr() { # $1 PR 編號  $2 head sha  $3 輪次
 3. 第 2 輪起：從 history.md 找上一則 senior review 與作者之後的回覆，逐條確認上一輪 finding 是否真的修好，再審新增的 diff。
    作者的說明只當線索，以程式與測試為準。
 4. 需要跑測試時，先照 goal.md「環境事實與修法」的 export 設好 Java 與 Maven，Maven 用 -o 離線模式。
-5. 你的最後一則訊息就是要貼到 PR 的留言本文，從「**Senior review 第 $round 輪**」那行開始，最後一行是 VERDICT。
+5. 你的最後一則訊息就是要貼到 PR 的留言本文，從「**Senior review 第 ${round} 輪**」那行開始，最後一行是 VERDICT。
 PROMPT
 
   local out="$wt/.review/out.md"
@@ -67,11 +75,14 @@ PROMPT
       printf '\n（巡邏腳本：reviewer 輸出的最後一行不是 VERDICT，依規則視為 CHANGES）\n\nVERDICT: CHANGES\n'
     fi
   } | gh pr review "$pr" --comment --body-file -
-  echo "PR #$pr 第 $round 輪已留言"
+  echo "PR #${pr} 第 ${round} 輪已留言"
+  cleanup
 }
 
 patrol_once() {
-  local prs; prs=$(gh pr list --state open --json number,headRefOid,isDraft --jq '.[] | select(.isDraft|not) | "\(.number) \(.headRefOid)"')
+  local only=${1:-}
+  local prs; prs=$(gh pr list --state open --json number,headRefOid,isDraft --jq '.[] | select(.isDraft|not) | "\(.number) \(.headRefOid)"' \
+    | awk -v only="$only" 'only == "" || $1 == only')
   [ -z "$prs" ] && { echo "沒有 open PR"; return; }
   while read -r pr head; do
     local bodies; bodies=$(gh pr view "$pr" --json reviews | jq --arg m "$MARK" '[.reviews[].body | select(startswith($m))]')
@@ -96,5 +107,5 @@ Senior review 已達 $MAX_ROUNDS 輪上限，之後的 commit 不再自動審，
 if [ "${1:-}" = "--loop" ]; then
   while true; do patrol_once || echo "本輪失敗，下輪重試" >&2; sleep "${INTERVAL:-900}"; done
 else
-  patrol_once
+  patrol_once "${1:-}"
 fi
