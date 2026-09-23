@@ -1,4 +1,5 @@
 -- gigaxfer sync-service schema V1 (system-design §3, D24 修, D29 修 11, D33 修 3, D54, D55, D56)
+-- 由 com.gigaxfer.sync.db.migration.V1__schema 逐句執行：每句只能是一個 CREATE TABLE 或 CREATE [UNIQUE] INDEX，已存在者跳過（中途失敗可接續，P02-08）。
 -- 可攜 SQL：Oracle 與 H2 MODE=Oracle 皆可執行。布林用 NUMERIC(1)。
 
 CREATE TABLE file_identity (

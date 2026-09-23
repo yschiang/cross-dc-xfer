@@ -194,4 +194,30 @@ class ConfigCodecTest {
             .isInstanceOf(InvalidConfigException.class)
             .hasMessageContaining("uniquely");
     }
+
+    /** P02-05：JSON null（整份或清單元素）不得以 NPE 逃出，必須是 InvalidConfigException，呼叫端才會回退。 */
+    @Test
+    void rejects_json_null_root_and_null_elements_as_invalid() throws IOException {
+        assertThatThrownBy(() -> ConfigCodec.decode("null".getBytes(StandardCharsets.UTF_8)))
+            .isInstanceOf(InvalidConfigException.class);
+        assertThatThrownBy(() -> ConfigCodec.decode(mutate(
+            "{ \"source_node\": \"P1\", \"data_class\": \"local-only\", \"targets\": [] },", "null,")))
+            .isInstanceOf(InvalidConfigException.class);
+    }
+
+    /** P02-03、D30 修 6：不做隱式型別轉換，不接受尾隨 token。 */
+    @Test
+    void rejects_implicit_coercion_and_trailing_tokens() throws IOException {
+        assertThatThrownBy(() -> ConfigCodec.decode(mutate("\"schema_version\": 1", "\"schema_version\": 1.9")))
+            .isInstanceOf(InvalidConfigException.class);
+        assertThatThrownBy(() -> ConfigCodec.decode(mutate("\"search_window_days\": 30", "\"search_window_days\": 30.9")))
+            .isInstanceOf(InvalidConfigException.class);
+        assertThatThrownBy(() -> ConfigCodec.decode(mutate("\"version\": 3", "\"version\": \"3\"")))
+            .isInstanceOf(InvalidConfigException.class);
+        assertThatThrownBy(() -> ConfigCodec.decode(mutate("\"published_by\": \"alice\"", "\"published_by\": 7")))
+            .isInstanceOf(InvalidConfigException.class);
+        byte[] trailing = (new String(fixture(), StandardCharsets.UTF_8) + " invalid-json").getBytes(StandardCharsets.UTF_8);
+        assertThatThrownBy(() -> ConfigCodec.decode(trailing)).isInstanceOf(InvalidConfigException.class);
+        assertThat(ConfigCodec.decode(fixture()).version()).isEqualTo(3L); // 原 fixture 仍合法
+    }
 }

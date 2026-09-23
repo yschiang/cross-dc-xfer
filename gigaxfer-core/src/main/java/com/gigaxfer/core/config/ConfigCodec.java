@@ -2,6 +2,10 @@ package com.gigaxfer.core.config;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.MapperFeature;
+import com.fasterxml.jackson.databind.cfg.CoercionAction;
+import com.fasterxml.jackson.databind.cfg.CoercionInputShape;
+import com.fasterxml.jackson.databind.type.LogicalType;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -20,15 +24,27 @@ public final class ConfigCodec {
     public static final int MAX_NODES = 10;
     private static final Pattern SHA256_HEX = Pattern.compile("^[0-9a-f]{64}$");
 
+    /**
+     * 嚴格解析（D30 修 6「欄位必須等於 v1 固定值」、P02-03）：不做任何隱式型別轉換——浮點不截成整數、
+     * 字串不轉數字／布林、數字不轉字串——且整份輸入只能是一個 JSON 值，後面不得接任何 token。
+     */
     private static final JsonMapper MAPPER = JsonMapper.builder()
         .addModule(new JavaTimeModule())
         .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
         .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
         .enable(DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES)
+        .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+        .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
+        .disable(MapperFeature.ALLOW_COERCION_OF_SCALARS)
+        .withCoercionConfig(LogicalType.Textual, c -> c
+            .setCoercion(CoercionInputShape.Integer, CoercionAction.Fail)
+            .setCoercion(CoercionInputShape.Float, CoercionAction.Fail)
+            .setCoercion(CoercionInputShape.Boolean, CoercionAction.Fail))
         .build();
 
     private ConfigCodec() {}
 
+    /** 只回傳通過全部驗證的設定；任何不合法輸入（含 JSON null、清單中的 null 元素）一律丟 InvalidConfigException。 */
     public static NodeConfig decode(byte[] json) throws InvalidConfigException {
         NodeConfig raw;
         try {
@@ -36,7 +52,15 @@ public final class ConfigCodec {
         } catch (IOException e) {
             throw new InvalidConfigException("malformed config: " + e.getMessage(), e);
         }
-        return validate(raw);
+        if (raw == null) {
+            throw new InvalidConfigException("config must be a JSON object, got null");
+        }
+        try {
+            return validate(raw);
+        } catch (RuntimeException e) {
+            // 巢狀 null（例如 required_targets 內的 null 元素）等形狀錯誤：呼叫端依賴「不合法 = InvalidConfigException」來回退（D45）。
+            throw new InvalidConfigException("invalid config: " + e, e);
+        }
     }
 
     public static byte[] encode(NodeConfig c) {

@@ -2,6 +2,7 @@ package com.gigaxfer.sync.auth;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -90,5 +91,18 @@ class NodeAuthFilterTest extends SyncTestSupport {
         String body = mvc.perform(get("/pending").param("target", "P3").header("Authorization", "Bearer " + P2_TOKEN))
             .andExpect(status().isForbidden()).andReturn().getResponse().getContentAsString();
         assertThat(body).doesNotContain("P2").doesNotContain("P3");
+    }
+
+    /** P02-11、D14 修 2：三個 Target 端點的 target 取自認證身分；不帶或相同 → 以呼叫者為 Target，不同 → 403。 */
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"GET, /pending", "GET, /file/P1/mes/k1", "POST, /report"})
+    void target_endpoints_take_target_from_caller_identity(String method, String path) throws Exception {
+        org.springframework.http.HttpMethod m = org.springframework.http.HttpMethod.valueOf(method);
+        mvc.perform(request(m, path).header("Authorization", "Bearer " + P2_TOKEN))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.caller").value("P2"));
+        mvc.perform(request(m, path).param("target", "P2").header("Authorization", "Bearer " + P2_TOKEN))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.caller").value("P2"));
+        mvc.perform(request(m, path).param("target", "P3").header("Authorization", "Bearer " + P2_TOKEN))
+            .andExpect(status().isForbidden());
     }
 }

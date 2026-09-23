@@ -285,4 +285,36 @@ class ConfigStoreTest {
         assertThat(dir.resolve("candidate.json")).doesNotExist();
         assertThat(ConfigCodec.decode(Files.readAllBytes(dir.resolve("lkg.json"))).version()).isEqualTo(3L);
     }
+
+    /** P02-05：active 內容是 JSON null 時退回 lkg，不讓 process 起不來。 */
+    @Test
+    void null_active_falls_back_to_lkg() throws Exception {
+        put("active.json", "null");
+        put("lkg.json", withVersion(fixture(), 2));
+        ConfigActivation a = new ConfigStore(dir).load();
+        assertThat(a.source()).isEqualTo(ConfigActivation.Source.LKG);
+        assertThat(a.config().version()).isEqualTo(2L);
+        assertThat(a.activationFailure()).hasValueSatisfying(r -> assertThat(r).contains("active.json unreadable"));
+    }
+
+    /** P02-03／P02-05：null、帶小數的整數欄位、JSON 後接垃圾的 candidate 都被拒，active 保留且記失敗。 */
+    @Test
+    void null_coerced_or_trailing_garbage_candidates_are_rejected_and_active_kept() throws Exception {
+        String v4 = withVersion(fixture(), 4);
+        for (String bad : new String[] {
+                "null",
+                v4.replace("\"search_window_days\": 30", "\"search_window_days\": 30.9"),
+                v4.replace("\"schema_version\": 1", "\"schema_version\": 1.9"),
+                v4 + " invalid-json"}) {
+            assertThat(bad).isNotEqualTo(v4);
+            put("active.json", withVersion(fixture(), 3));
+            put("candidate.json", bad);
+            ConfigActivation a = new ConfigStore(dir).load();
+            assertThat(a.config().version()).isEqualTo(3L);
+            assertThat(a.source()).isEqualTo(ConfigActivation.Source.ACTIVE);
+            assertThat(a.activationFailure()).hasValueSatisfying(r -> assertThat(r).contains("candidate.json rejected"));
+            assertThat(Files.readString(dir.resolve("candidate.json"))).isEqualTo(bad);
+            assertThat(dir.resolve("lkg.json")).doesNotExist();
+        }
+    }
 }

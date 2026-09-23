@@ -73,6 +73,8 @@ curl -s localhost:8080/actuator/prometheus | grep -E '^db_health'
 # db_health{node="P1",} 1.0
 ```
 
+首次 migration 若在建表途中斷線（Oracle 的 DDL 不可回滾，會留下部分已建的表），不需人工清理：下一輪重試移除 Flyway 的失敗紀錄（`repair`），重跑 V1 時已存在的表與索引逐句跳過，從斷點接續，不刪任何既存物件（`MigrationResumeTest`）。前提是 sync service 使用專用 schema：同名但不同欄位的既有表會被沿用而不報錯。
+
 ## 設定檔格式
 
 見 `docs/superpowers/plans/P02-sync-service-skeleton.md`「設定檔格式」。`peer_token_sha256` 放 operational 段：`printf '%s' "$TOKEN" | shasum -a 256`。設定檔範例的頂層鍵為 `policy.deployment`（此 deployment 的識別字串）與 `policy.namespaces`（登錄的 Namespace 清單）；未登錄的 Namespace 一律不允許 write。

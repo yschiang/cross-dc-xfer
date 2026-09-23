@@ -1,6 +1,7 @@
 package com.gigaxfer.sync.db;
 
 import com.gigaxfer.sync.SyncProperties;
+import java.util.Arrays;
 import java.util.UUID;
 import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
@@ -22,12 +23,21 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class DbBootstrap {
     private static final Logger log = LoggerFactory.getLogger(DbBootstrap.class);
     static final long RETRY_MILLIS = 5_000;
+    static final String MIGRATIONS = "classpath:com/gigaxfer/sync/db/migration";
 
     @Bean
     DbState dbState(DataSource ds, TransactionTemplate tx) {
         JdbcTemplate jdbc = new JdbcTemplate(ds);
         return new DbState(() -> {
-            Flyway.configure().dataSource(ds).locations("classpath:db/migration").load().migrate();
+            Flyway flyway = Flyway.configure().dataSource(ds).locations(MIGRATIONS).load();
+            if (Arrays.stream(flyway.info().all()).anyMatch(i -> i.getState().isFailed())) {
+                // DDL 不可回滾（Oracle、H2）：失敗的 migration 留下半套物件與一筆失敗紀錄，之後每次 migrate
+                // 都被 validate 擋下（P02-08）。migration 逐句冪等，移除失敗紀錄後重跑即從斷點接續，不刪任何物件。
+                // ponytail: repair 也會把已套用 migration 的 checksum 對齊本機版本，只在有失敗紀錄時才呼叫。
+                log.warn("failed migration recorded; repairing history and resuming");
+                flyway.repair();
+            }
+            flyway.migrate();
             tx.executeWithoutResult(s -> {
                 Integer meta = jdbc.queryForObject("SELECT COUNT(*) FROM node_meta", Integer.class);
                 if (meta == null || meta == 0) {
