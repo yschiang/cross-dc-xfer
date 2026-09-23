@@ -129,7 +129,7 @@ Feature ticket 長這樣（P01 [#2](https://github.com/yschiang/cross-dc-xfer/is
 | ① 開 ticket | 寫 AC 清單（如 #1）；還沒 ticket 的 plan（目前 P03）在迴圈開始前先開 | ticket |
 | ② 實作 | SDD 逐 task 實作、whole-branch review、fix loop | 分支、ledger、validation 檔 |
 | ③ 開 PR | push 分支；body 連 ticket、列 AC 對照與 validation 檔；CI 是免費的第二層檢查 | PR |
-| ④ 獨立 review | 巡邏腳本看到 PR 的新 commit，就叫一個全新的 Codex 審 diff，結論原樣貼成留言；作者每輪先處理 CHANGES，最多兩輪。見 [reviewer.md](reviewer.md)；opencode 版見 [opencode-workflow.md](opencode-workflow.md) | review 留言 |
+| ④ 獨立 review | 作者每次 push 後觸發巡邏腳本，腳本叫一個全新的 Codex 審 diff，結論原樣貼成留言；作者每輪先處理 CHANGES，最多兩輪。見 [reviewer.md](reviewer.md)；opencode 版見 [opencode-workflow.md](opencode-workflow.md) | review 留言 |
 | ⑤ merge | 人 approve／merge 或退回 | main |
 
 ```text
@@ -428,4 +428,4 @@ IngestService.java + IngestServiceTest.java
 
 | 日期 | 修訂 |
 | --- | --- |
-| 2026-09-24 | **新增 PR 巡邏，用不同模型的 reviewer。** 寫碼的 agent 不再自己 review：[巡邏腳本](scripts/review-patrol.sh)看到 PR 的新 commit，就叫一個全新的 Codex 行程審 diff，結論原樣貼成 PR 留言；作者每輪先處理 CHANGES，最多兩輪，merge 仍由人做。Claude 寫、Codex 審，兩邊不會有相同的盲點。做法見 [reviewer.md](reviewer.md)，opencode 版本見 [opencode-workflow.md](opencode-workflow.md) |
+| 2026-09-24 | **新增 PR 巡邏，用不同模型的 reviewer。** 寫碼的 agent 不再自己 review：它每次 push 後觸發[巡邏腳本](scripts/review-patrol.sh)，腳本叫一個全新的 Codex 行程審 diff，結論原樣貼成 PR 留言；作者每輪先處理 CHANGES，最多兩輪，merge 仍由人做。Claude 寫、Codex 審，兩邊不會有相同的盲點。做法見 [reviewer.md](reviewer.md)，opencode 版本見 [opencode-workflow.md](opencode-workflow.md) |

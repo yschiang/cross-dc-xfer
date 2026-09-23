@@ -12,14 +12,23 @@
 
 ## 啟動
 
-在 repo 的 main checkout 開一個 terminal（或 tmux）：
+**主要由寫碼的迴圈觸發。** goal.md 規定 Looper 每次開 PR 或 push 修正後，在背景跑：
+
+```
+scripts/review-patrol.sh <PR 編號>
+```
+
+寫碼迴圈只按開始：prompt 由腳本產生，留言由腳本原樣貼上，迴圈不得修改腳本與本檔，也不得動 review 留言。
+
+**手動或常駐巡邏**，用在不是由 Looper 開的 PR，或 Looper 沒在跑的時候：
 
 ```
 DRY_RUN=1 scripts/review-patrol.sh      # 先看會審哪些 PR，不叫 Codex、不留言
+scripts/review-patrol.sh                # 所有 open PR 巡一輪
 scripts/review-patrol.sh --loop         # 每 15 分鐘巡一輪
 ```
 
-要指定 Codex 模型就加 `REVIEWER_MODEL=<模型 ID>`。
+Looper 在跑時不要同時開 `--loop`：兩邊可能同時審同一個 head，留下兩則第 1 輪。要指定 Codex 模型就加 `REVIEWER_MODEL=<模型 ID>`。
 
 ## 腳本每輪做什麼
 
