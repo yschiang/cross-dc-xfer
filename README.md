@@ -67,7 +67,7 @@ flowchart LR
 | **⑤ 開 Feature ticket** | Member 接手的範圍、依據與驗收條件是什麼？ | [P02 ticket #1](https://github.com/yschiang/cross-dc-xfer/issues/1) |
 | **⑥ 寫實作 plan** | 實作與測試要分成哪些步驟？ | [P02-sync-service-skeleton.md](docs/superpowers/plans/P02-sync-service-skeleton.md) |
 | **⑦ 交給 agent 執行** | 今晚做哪些工作、如何續行、何時停止？ | [goal.md](goal.md) |
-| **⑧ Review 與驗收** | 做到哪個 commit、哪些測試通過、還需人決定什麼？ | [P01 PR #3](https://github.com/yschiang/cross-dc-xfer/pull/3) 與 [驗收證據](https://github.com/yschiang/cross-dc-xfer/blob/p01-core-finalize-pr/docs/validation/P01-validation.md)；夜間交接見 [overnight-report.md](docs/reports/overnight-report.md) |
+| **⑧ Review 與驗收** | 做到哪個 commit、哪些測試通過、還需人決定什麼？ | [P01 PR #3](https://github.com/yschiang/cross-dc-xfer/pull/3) 與 [驗收證據](docs/validation/P01-validation.md)；夜間交接見 [overnight-report.md](docs/reports/overnight-report.md) |
 
 ⑤、⑥ 是同一個 P02 Feature 的實際 ticket 與接續 plan；ticket 已發布，plan 修訂稿尚待與執行分支整合。閱讀設計時，可搭配 [CONTEXT.md](CONTEXT.md) 查詞彙、[ADRs](docs/adr/) 查架構理由。
 
@@ -119,10 +119,10 @@ Architect 從 P00 選出 P02「同步服務基礎」，用 Matt `to-tickets` 整
 | 產出 | 位置 | 看什麼 |
 | --- | --- | --- |
 | Ticket | [P01 #2](https://github.com/yschiang/cross-dc-xfer/issues/2)；PR review 的非阻擋項另開 [#4](https://github.com/yschiang/cross-dc-xfer/issues/4) | 能力、範圍、9 項驗收條件與下游依賴 |
-| Plan | [P01-core-finalize.md](https://github.com/yschiang/cross-dc-xfer/blob/p01-core-finalize-pr/docs/superpowers/plans/P01-core-finalize.md) | 怎麼拆步驟；已完成的工作如何交接 |
+| Plan | [P01-core-finalize.md](docs/superpowers/plans/P01-core-finalize.md) | 怎麼拆步驟；已完成的工作如何交接 |
 | 分支 | `p01-core-finalize-pr`（提交分支，接到 main）；原 worktree `p01-core-finalize` 保留 | worktree 是工作位置，PR 才是送審的成果 |
-| 測試證據 | [P01-validation.md](https://github.com/yschiang/cross-dc-xfer/blob/p01-core-finalize-pr/docs/validation/P01-validation.md) | 每項 AC 對應哪些測試、在哪個環境執行、哪些尚未驗證 |
-| PR | [#3](https://github.com/yschiang/cross-dc-xfer/pull/3)，本文 `Closes #2` | 程式差異、測試結果與 review 意見；合併時自動關票 |
+| 測試證據 | [P01-validation.md](docs/validation/P01-validation.md) | 每項 AC 對應哪些測試、在哪個環境執行、哪些尚未驗證 |
+| PR | [#3](https://github.com/yschiang/cross-dc-xfer/pull/3)，本文 `Closes #2`，已合併 | 程式差異、測試結果與 review 意見；合併時自動關票 |
 
 **依賴交接：** [P02 #1](https://github.com/yschiang/cross-dc-xfer/issues/1) 依賴 P01 #2。P02 已在 `p02-sync-service-skeleton` 分支上有 plan 與 validation 檔，提交 PR 前再接上 P01 的正式整合版本；屆時同樣以一張表交付。OpenSpec 路線與工具細節見 [附錄](#選用-skills)。 四步的細節見附錄[工作流說明](#工作流說明)。
 
