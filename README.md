@@ -42,18 +42,15 @@ Milestone：可完整驗收的有感能力
 
 ## 工作流
 
-**真實專案：跨 Node 交易檔案同步框架。** Source 保存同步義務，Target 透過 HTTP pull 取得副本，重試、自查與對帳處理故障與恢復。
-
 ```mermaid
-flowchart LR
-    subgraph SO["Solution Owner"]
-        I["① intent.md"] --> S["②③ spec.md<br/>system-design.md"] --> R["④ P00-roadmap.md"] --> T["⑤ Ticket #1、#2"]
-    end
-    subgraph MB["Member + agent"]
-        P["⑥⑦ plan、worktree<br/>goal.md → /loop"] --> PR["⑧ PR #3<br/>validation、review、CI"]
-    end
-    T --> P
-    PR --> M(["人 approve → merge main"])
+flowchart TD
+    R(["需求：跨 Node 檔案同步"]) --> P0["釐清需求<br/>Solution Owner"]
+    P0 -->|"① intent.md"| S["系統分析、高階設計<br/>Architect"]
+    S -->|"②③ spec.md<br/>system-design.md"| M["安排 Milestones、開 Feature tickets<br/>Architect"]
+    M -->|"④ P00-roadmap.md<br/>⑤ Ticket #1、#2"| D["校對 plan、實作、測試<br/>Member + agent（worktree、/loop）"]
+    D -->|"⑥ plan、⑦ goal.md<br/>commits、validation"| RV["review、送 PR<br/>Member + 獨立 agent reviewer"]
+    RV -->|"⑧ PR #3、review 紀錄、CI"| H["approve／merge<br/>人"]
+    H -->|"main"| E(["交付"])
 ```
 
 照這個順序讀，可以看到一個需求如何變成可交接、可驗收的工作。**①–⑤ 是 Solution Owner 的交接準備，⑥–⑦ 由 Member 規劃與執行，⑧ 回到人的 review／驗收。**
@@ -62,7 +59,7 @@ flowchart LR
 | --- | --- | --- |
 | **① 釐清目的** | 為什麼做、要解決誰的問題？ | [intent.md](intent.md) |
 | **② 定義需求** | 要做到什麼，怎樣算達標？ | [spec.md](docs/spec.md) |
-| **③ 設計方案** | 系統怎麼分工，介面與故障行為怎麼定？ | [system-design.md](docs/design/system-design.md)、[design-decisions.md](docs/design/design-decisions.md) |
+| **③ 設計方案** | 系統怎麼分工，介面與故障行為怎麼定？ | [設計網頁版](https://yschiang.github.io/cross-dc-xfer/)、[system-design.md](docs/design/system-design.md)、[design-decisions.md](docs/design/design-decisions.md) |
 | **④ 安排交付** | 切成哪些 Milestones／Features，誰依賴誰？ | [P00-roadmap.md](docs/superpowers/plans/P00-roadmap.md) |
 | **⑤ 開 Feature ticket** | Member 接手的範圍、依據與驗收條件是什麼？ | [P02 ticket #1](https://github.com/yschiang/cross-dc-xfer/issues/1) |
 | **⑥ 寫實作 plan** | 實作與測試要分成哪些步驟？ | [P02-sync-service-skeleton.md](docs/superpowers/plans/P02-sync-service-skeleton.md) |
@@ -98,15 +95,9 @@ Architect 從 P00 選出 P02「同步服務基礎」，用 Matt `to-tickets` 整
 
 實際產出：[P02 ticket #1：Node 本地同步服務基礎](https://github.com/yschiang/cross-dc-xfer/issues/1) → [P02 接續 plan](docs/superpowers/plans/P02-sync-service-skeleton.md)。這次是在已有 plan 與部分實作後補票，再用驗收條件校對後續工作。
 
-| 欄位 | 內容 |
-| --- | --- |
-| **Milestone／交付範圍** | M1 共用基礎／P02 同步服務基礎 |
-| **要完成什麼** | 每個 Node 能用有效的本地設定啟動同步服務、提供 Policy、驗證 Node 身分；設定或 DB 故障時有明確的保留、降級與恢復行為。 |
-| **spec／設計決定行為** | SR-01、AC-CP／AC-CFG；system-design §3、§4、§8；相關決策的最新適用修訂。 |
-| **roadmap 決定邊界** | P00 的 P02 範圍；掃描、傳輸、Consumer 讀取與 ops 操作由後續 Pxx 負責。 |
-| **Blocked by** | P01 core 的已驗證介面；在依賴 P01 的工作分支續行，不需重新實作 P01。 |
-| **怎麼驗收** | 壞設定不取代有效設定；Policy 含 Namespace 登錄；DB 恢復後可繼續初始化；Node 憑證正確綁定身分；重啟不重建既有代次。 |
-| **Member 接手後補** | Plan／Tasks、PR、測試與驗收證據。既有程式碼與分支用來確認進度，不取代 spec。 |
+Feature ticket 長這樣（P01 [#2](https://github.com/yschiang/cross-dc-xfer/issues/2)；P02 [#1](https://github.com/yschiang/cross-dc-xfer/issues/1) 同一格式）：類型與 Milestone、交付能力、範圍與不在本票、逐項驗收條件、Blocked by。
+
+<img src="docs/images/ticket-p01-issue-2.png" alt="P01 ticket #2 on GitHub" width="900">
 
 本例的開票請求：
 
@@ -128,22 +119,17 @@ Architect 從 P00 選出 P02「同步服務基礎」，用 Matt `to-tickets` 整
 
 ### 平行開發與夜間 /loop
 
-**PR 粒度：一個 plan（P0N）一個 PR，不再細拆。** plan 裡的 task 不能獨立 merge，P02 的 Task 1 只是 skeleton，單獨進 main 沒意義。task 層已有 subagent 的 spec 與 quality review 加 ledger，分支層再有一次 whole-branch review；人在 PR 層看的是「這個 plan 能不能進 main」，不是逐行。PR #3 約 99 個測試的規模對一個人偏大，但拆成 7–11 個 task PR 早上只會更痛苦。
+白天由人開票與 review，晚上 agent 用 `/loop` 讀 [goal.md](goal.md) 推進，早上人讀 [overnight-report.md](docs/reports/overnight-report.md)。目標、順序、邊界與停止條件都寫在 `goal.md`。
 
-**下一個 feature 不等上一個 approved，用 stacked PR。** 等 approval 等於迴圈閒置一整晚。P02 PR 的 base 是 main；P03 PR 的 base 是 `p02-sync-service-skeleton`；P02 合併後把 P03 的 base 改成 main（`gh pr edit --base main`；刪掉分支 GitHub 會自動改，但本專案保留分支供人學習）。早上照 P01 → P02 → P03 順序看、順序 merge。代價是真的：上游 review 要求改設計，下游就要 rebase；P02 rebase 到新 main 出過 4 個衝突，可處理但不是零成本，比閒置一晚划算。
+**每個 feature 固定五步，前四步 agent 做，只有 merge 由人做：**
 
-本專案已有 [goal.md](goal.md) 與 [overnight-report.md](docs/reports/overnight-report.md) 作為任務與報告實例。`/loop` 是執行入口；目標、順序、邊界與停止條件寫在 `goal.md`。
-
-**每個 feature 固定四步，全部可自動化；只有 merge 不自動化。**
-
-1. **開 ticket**：寫 AC 清單（如 #1）。還沒 ticket 的 plan（目前 P03）在迴圈開始前先開。
-2. **SDD 實作**、whole-branch review、fix loop。
-3. **push 分支、開 PR**：body 連 ticket、列 AC 對照與 validation 檔；CI 是免費的第二層檢查。
-4. **獨立 reviewer 對 PR diff review**，結果用 `gh pr review --comment` 貼上；有 finding 就修、再 review 一輪，然後更新 PR body 與 ticket 留言。
-
-停止條件是「任何 merge 到 main」，不是「任何 push」；push 限定本迴圈建立的 feature 分支。早上看到的是 2–3 個 stacked PR，每個都帶 ticket、validation 檔、獨立 review 紀錄與 CI 綠燈，人只做 approve／merge 或退回。
-
-**代價要講清楚：** review 變成 agent 對 agent，人只在 merge 點介入，設計層級的錯誤（例如 P02 的 obligation index 欄位缺陷）會一路帶到 P03 才被人看到。在意的話在 `goal.md` 加一條：whole-branch review 若發現設計文件本身錯，就停在該 PR，不開下一個。這是唯一值得「等」的情況。
+| 步驟 | 做什麼 | 產出 |
+| --- | --- | --- |
+| ① 開 ticket | 寫 AC 清單（如 #1）；還沒 ticket 的 plan（目前 P03）在迴圈開始前先開 | ticket |
+| ② 實作 | SDD 逐 task 實作、whole-branch review、fix loop | 分支、ledger、validation 檔 |
+| ③ 開 PR | push 分支；body 連 ticket、列 AC 對照與 validation 檔；CI 是免費的第二層檢查 | PR |
+| ④ 獨立 review | 獨立 reviewer 看 PR diff，用 `gh pr review --comment` 貼上；有 finding 就修、再 review 一輪；更新 PR body 與 ticket 留言 | review 紀錄 |
+| ⑤ merge | 人 approve／merge 或退回 | main |
 
 ```text
 /loop：讀 goal.md + progress.md
@@ -151,6 +137,17 @@ Architect 從 P00 選出 P02「同步服務基礎」，用 Matt `to-tickets` 整
   → 未完成且可繼續：下一輪
   → 完成或遇停止條件：寫 overnight-report.md → 人 review／驗收
 ```
+
+**三條規則：**
+
+- **一個 plan（P0N）一個 PR，不再細拆。** task 不能獨立 merge，P02 的 Task 1 只是 skeleton；task 層已有 subagent 的 spec 與 quality review 加 ledger，分支層再有 whole-branch review；人在 PR 層看的是「這個 plan 能不能進 main」，不是逐行。PR #3 約 99 個測試對一個人偏大，拆成 7–11 個 task PR 早上只會更痛苦。
+- **下一個 feature 不等上一個 approved，用 stacked PR。** 等 approval 等於迴圈閒置一整晚。P02 PR 的 base 是 main；P03 PR 的 base 是 `p02-sync-service-skeleton`；P02 合併後用 `gh pr edit --base main` 把 P03 改指 main（刪掉分支 GitHub 會自動改，但本專案保留分支供人學習）。早上照 P01 → P02 → P03 順序看、順序 merge。
+- **停止條件是「merge 到 main」，不是「push」。** push 限定本迴圈建立的 feature 分支。早上看到的是 2–3 個 stacked PR，每個都帶 ticket、validation 檔、獨立 review 紀錄與 CI 綠燈。
+
+**代價要講清楚：**
+
+- **stacked PR：** 上游 review 要求改設計，下游就要 rebase。P02 rebase 到新 main 出過 4 個衝突，可處理但不是零成本，比閒置一晚划算。
+- **agent 對 agent review：** 人只在 merge 點介入，設計層級的錯誤（例如 P02 的 obligation index 欄位缺陷）會一路帶到 P03 才被人看到。在意的話在 `goal.md` 加一條：whole-branch review 若發現設計文件本身錯，就停在該 PR，不開下一個。這是唯一值得「等」的情況。
 
 並行條件、日夜分工與驗收時點見附錄[工作流說明](#工作流說明)。
 
@@ -180,6 +177,18 @@ Solution Owner 對整體需求與方案負責；可由 PM、Architect 協作或�
 **每個 Milestone 都有自己的端到端驗收，不以底下的票全關閉作為完成證據。** M1 完成就能展示跨 Node 讀取，不必等 M2；M2 可以建立在 M1 上，「可獨立驗收」不表示彼此沒有實作依賴。
 
 Architect 的 Feature ticket 寫清楚 **範圍、spec／設計連結、驗收條件、Blocked by**。例如「副本自動修復」需要既有回報與重交付能力；Member 接手後才寫 `replica-repair-plan.md` 並實作。
+
+#### Feature ticket 的欄位（以 P02 #1 為例）
+
+| 欄位 | 內容 |
+| --- | --- |
+| **Milestone／交付範圍** | M1 共用基礎／P02 同步服務基礎 |
+| **要完成什麼** | 每個 Node 能用有效的本地設定啟動同步服務、提供 Policy、驗證 Node 身分；設定或 DB 故障時有明確的保留、降級與恢復行為。 |
+| **spec／設計決定行為** | SR-01、AC-CP／AC-CFG；system-design §3、§4、§8；相關決策的最新適用修訂。 |
+| **roadmap 決定邊界** | P00 的 P02 範圍；掃描、傳輸、Consumer 讀取與 ops 操作由後續 Pxx 負責。 |
+| **Blocked by** | P01 core 的已驗證介面；在依賴 P01 的工作分支續行，不需重新實作 P01。 |
+| **怎麼驗收** | 壞設定不取代有效設定；Policy 含 Namespace 登錄；DB 恢復後可繼續初始化；Node 憑證正確綁定身分；重啟不重建既有代次。 |
+| **Member 接手後補** | Plan／Tasks、PR、測試與驗收證據。既有程式碼與分支用來確認進度，不取代 spec。 |
 
 #### 並行開發的條件
 
