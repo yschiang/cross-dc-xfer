@@ -238,15 +238,21 @@ public final class WriteHandle implements AutoCloseable {
             // 殘留情況仍由 ③ link-key 的 EEXIST 分支涵蓋。
             // Files.exists 會把讀取失敗吞成「不存在」，那會讓 EIO/ESTALE 被誤判成未發布（甚至 EXPIRED），
             // 所以用 readAttributes：只有 NoSuchFileException 算不存在，其餘 IOException 往外傳成 Failure(IO)。
-            if (preexisting && store.nfs.call("stat-key", () -> {
-                try {
-                    Files.readAttributes(contentPath, BasicFileAttributes.class);
-                    return true;
-                } catch (NoSuchFileException e) {
-                    return false;
+            if (preexisting) {
+                boolean published = store.nfs.call("stat-key", () -> {
+                    try {
+                        Files.readAttributes(contentPath, BasicFileAttributes.class);
+                        return true;
+                    } catch (NoSuchFileException e) {
+                        return false;
+                    }
+                });
+                if (published) {
+                    return verifyPublished(contentPath, declared);
                 }
-            })) {
-                return verifyPublished(contentPath, declared);
+                // 本 handle 先前送出的 link 已全部結束（進入前 linkInFlight 已確認），正式檔又確定不存在：
+                // 那些 link 確定未生效，結果已知。之後的 I/O 錯誤是確定的 Failure；新 link 再逾時才重新標記未知。
+                linkOutcomeUnknown = false;
             }
 
             // 需要再次嘗試發布：年齡只約束「再次嘗試一個早先的宣告」（D53 修）。

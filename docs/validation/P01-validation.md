@@ -12,7 +12,7 @@
 | 提交分支 | `p01-core-finalize-pr`，基於 `c891fc655bcc70c736f659d11f4d1a34099da825`；首個 commit `f17cc4c` 移入原實作，之後的修正 commit 回應 PR #3 review 與 CI（見「審查修正」） |
 | 被測版本 | 本文件所在 commit（提交前與提交後均以相同 worktree 內容重跑） |
 | 本次執行 | 2026-09-23，macOS arm64，本機暫存檔案系統；JDK 27、Maven 3.9.16，`maven.compiler.release=21` |
-| 結果 | **99 tests，0 failures、0 errors、0 skipped**（`7913a88` 起，含 `FinalizeRetryTest.discard_after_finalize_started_is_rejected_and_keeps_temp`）；Surefire XML 彙總。PR #3 合併時為 99；follow-up PR #6 加 `WriteHandleLifecycleTest` 5 個後為 **104** |
+| 結果 | **99 tests，0 failures、0 errors、0 skipped**（`7913a88` 起，含 `FinalizeRetryTest.discard_after_finalize_started_is_rejected_and_keeps_temp`）；Surefire XML 彙總。PR #3 合併時為 99；follow-up PR #6 加 `WriteHandleLifecycleTest` 9 案（7 個測試方法，其中一個參數化 3 案）後為 **108** |
 | CI | GitHub Actions `CI`（`.github/workflows/ci.yml`）以 Temurin **JDK 21** 執行 `mvn -B -ntp verify`；PR #3 head `ad57714` 的 remote check 成功 |
 
 舊 P01 分支與現行 main 無共同祖先，因此另建提交分支，未改寫原 P01／P02 分支。本紀錄不是 GitHub Reviewer 已批准。

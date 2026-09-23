@@ -76,6 +76,40 @@ class WriteHandleLifecycleTest {
         assertThat(root.resolve("P3/mes/metrology/2026-09-22/08/V-" + op)).hasContent("v");
     }
 
+    /**
+     * 未知狀態只延續到 rediscovery 為止：第一次 link 逾時、背景以 EACCES 結束 → 重試時 stat-key 確認正式檔不存在
+     * → 新 link 再遇 EACCES 是確定的 Failure（P01 偏差 3 ⑨），重呼同一結果、可 discard、恢復權限後也不再發布。
+     */
+    @Test
+    void definite_io_after_unknown_link_is_resolved_is_terminal_failure() throws Exception {
+        WriteHandle h = store.beginWrite("mes", "metrology", "U1");
+        h.stream().write("u".getBytes(StandardCharsets.UTF_8));
+        Path dir = root.resolve("P3/mes/metrology/2026-09-22/08");
+        CountDownLatch release = new CountDownLatch(1);
+        nfs.hang("link-key", release);
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
+
+        java.util.Set<java.nio.file.attribute.PosixFilePermission> rw = Files.getPosixFilePermissions(dir);
+        Files.setPosixFilePermissions(dir, java.nio.file.attribute.PosixFilePermissions.fromString("r-xr-xr-x"));
+        try {
+            org.junit.jupiter.api.Assumptions.assumeFalse(Files.isWritable(dir), "running as root: permissions not enforced");
+            release.countDown();
+            assertThatThrownBy(() -> nfs.hung.get(0).get()).hasCauseInstanceOf(java.nio.file.AccessDeniedException.class);
+
+            FinalizeResult r = h.finalizeWrite();
+            assertThat(r).isInstanceOf(FinalizeResult.Failure.class);
+            assertThat(((FinalizeResult.Failure) r).reason()).isEqualTo(FailureReason.IO);
+            assertThat(h.finalizeWrite()).isSameAs(r);
+        } finally {
+            Files.setPosixFilePermissions(dir, rw);
+        }
+        FinalizeResult r = h.finalizeWrite();
+        h.discard();
+        assertThat(h.writingPath()).doesNotExist();
+        assertThat(h.finalizeWrite()).isSameAs(r);
+        assertThat(dir.resolve("U1")).doesNotExist();
+    }
+
     /** 刪除遇到一般 IOException（EACCES、EIO…）也不算已放棄：handle 中毒，finalizeWrite 不得發布。 */
     @Test
     void discard_hard_io_failure_poisons_handle_and_never_publishes() throws Exception {
