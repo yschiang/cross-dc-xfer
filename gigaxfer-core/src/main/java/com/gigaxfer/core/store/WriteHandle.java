@@ -107,8 +107,8 @@ public final class WriteHandle implements AutoCloseable {
 
     /**
      * 只允許 Finalize 前（CONTEXT.md Discard）。write 失敗（poisoned）或 Finalize 已回 Failure 的 handle 仍允許。
-     * 刪除真正完成才進 DISCARDED；池滿／timeout 時 handle 中毒（finalizeWrite 只回 Failure、不發布），
-     * 可重呼 discard 再刪一次。
+     * 刪除真正完成才進 DISCARDED；刪除只要沒有確定完成（池滿、timeout、EACCES、EIO、ESTALE 或任何例外），
+     * handle 就中毒（finalizeWrite 只回 Failure、不發布），可重呼 discard 再刪一次。
      */
     public void discard() throws IOException {
         synchronized (stream) {
@@ -122,7 +122,7 @@ public final class WriteHandle implements AutoCloseable {
                 channel.close();
                 Files.deleteIfExists(writing);
             });
-        } catch (NfsException | IOException | RuntimeException e) {
+        } catch (NfsException | IOException | RuntimeException | Error e) {
             // 任何「刪除沒有確定完成」（池滿、timeout、EACCES、EIO、ESTALE…）都讓 handle 中毒：
             // 停在 WRITING 的話，之後的 finalizeWrite 會發布 Application 已放棄的內容。
             synchronized (stream) {
@@ -135,6 +135,7 @@ public final class WriteHandle implements AutoCloseable {
             }
             if (e instanceof NfsException ne) throw new NfsUnavailableException(ne.op(), ne);
             if (e instanceof IOException io) throw io;
+            if (e instanceof Error err) throw err;
             throw (RuntimeException) e;
         }
         lifecycle = Lifecycle.DISCARDED;
