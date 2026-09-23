@@ -1,59 +1,42 @@
-# reviewer.md — 常駐 senior reviewer 的任務書
+# reviewer.md — 常駐 senior review
 
-> 讀者：在 `/loop` 裡巡邏的 Claude session。這個 session 不寫程式、不 merge，只負責讓每個 PR 的每個新 commit 都被一個全新 context 的 reviewer 審過，結論直接留在 PR。寫碼的是另一個 session（依 [goal.md](goal.md)），兩邊只透過 PR 留言交接。
+> 主版本：**Claude Code 寫碼，Codex review。** 寫碼的是 Claude Code 的夜間迴圈（依 [goal.md](goal.md)）；review 由巡邏腳本 `scripts/review-patrol.sh` 驅動，每次叫一個全新的 Codex 行程。兩邊只透過 PR 留言交接。改用 opencode 寫碼與 review 的支線版本見 [opencode-workflow.md](opencode-workflow.md)，審查標準與留言格式共用本檔。
 
 ## 為什麼這樣分工
 
-- **作者不審自己。** 作者派的 review，指示由作者寫、結果由作者轉述，不算獨立。本 session 不讀作者的 ledger 與推理，只看 PR、ticket 與設計文件。
-- **每次 review 都是全新 context。** 巡邏 session 本身不審，只派 subagent。第二輪不會附和第一輪，也不會被作者的修正說明帶著走。
-- **標準固定。** 每個 reviewer 都讀本檔的「審查標準」，不同輪、不同 PR 用同一把尺。
+- **作者不審自己。** 作者派的 review，指示由作者寫、結果由作者轉述，不算獨立。reviewer 不讀作者的 ledger 與推理，只看 PR、ticket 與設計文件。
+- **換一個模型審。** Claude 寫、Codex 審，兩邊不會有相同的盲點。
+- **每次 review 都是全新行程。** 第二輪不會附和第一輪，也不會被作者的修正說明帶著走。
+- **巡邏不用模型。** 列 PR、比對 head commit 是固定邏輯，交給腳本；只有 review 本身叫模型。
+- **標準固定。** 每次 review 都讀本檔的「審查標準」，不同輪、不同 PR 用同一把尺。
 
 ## 啟動
 
-在 repo 的 main checkout 開一個新 session：
+在 repo 的 main checkout 開一個 terminal（或 tmux）：
 
 ```
-claude --model opus
-/loop 15m 讀 reviewer.md，執行一輪巡邏
+DRY_RUN=1 scripts/review-patrol.sh      # 先看會審哪些 PR，不叫 Codex、不留言
+scripts/review-patrol.sh --loop         # 每 15 分鐘巡一輪
 ```
 
-## 每輪巡邏
+要指定 Codex 模型就加 `REVIEWER_MODEL=<模型 ID>`。
 
-1. 列出 open PR，略過 draft：
-   ```
-   gh pr list --state open --json number,headRefOid,isDraft
-   ```
-2. 對每個 PR 讀留言（`gh pr view <N> --comments`），找含 `<!-- senior-review` 標記的留言：
-   - 已有一則的 `head:` 等於目前 `headRefOid`：這個 commit 審過，跳過。
-   - 已有 2 則，且最新一則不是 CLEAN：已達上限。第一次遇到時留一則「已達兩輪上限，交由人決定」，之後跳過。
-   - 其餘：派 reviewer，round = 已有則數 + 1。
-3. 一次只派一個 reviewer，等它回報已留言，再處理下一個 PR。
-4. 沒有要審的 PR，本輪結束。
+## 腳本每輪做什麼
 
-巡邏 session 不改 repo 任何檔案，也不轉述 reviewer 的結論；留言由 reviewer 自己貼。
+1. 列出 open PR，略過 draft。
+2. 讀每個 PR 的 review，找第一行是 `<!-- senior-review` 標記的：
+   - 某則的 `head:` 等於目前 head：這個 commit 審過，跳過。
+   - 已有 2 則：已達上限。留一次「已達兩輪上限，交由人決定」，之後跳過。
+   - 其餘：審下一輪。
+3. 審一輪：
+   - 在暫存目錄建立 PR head 的拋棄式 worktree，不碰任何分支。
+   - 把 PR 本文、diff、ticket、歷次 review 與回覆放進 worktree 的 `.review/`。Codex 不需要 GitHub 權限。
+   - 用 `codex exec --sandbox workspace-write` 跑 reviewer，只能寫這個拋棄式目錄，所以能跑測試但改不到分支。
+   - 腳本在最前面加標記行，後面原樣接上 Codex 的最後一則訊息，用 `gh pr review --comment` 貼上。最後一行不是 VERDICT 時，腳本附註並視為 CHANGES。
+   - 刪掉拋棄式 worktree。
+4. 一次審一個 PR，審完再處理下一個。
 
-## 派 reviewer
-
-用 Agent 工具，`subagent_type: general-purpose`、`model: opus`。prompt 用下面的模板，只替換角括號，不附其他 context。
-
-```
-你是這個 repo 的 senior reviewer，審 PR #<N> 第 <round> 輪，head <完整 sha>。
-只讀不寫：不 commit、不 push、不改任何分支上的檔案、不 approve、不 merge。
-
-1. 讀 reviewer.md 的「審查標準」與「留言格式」兩節。
-2. 讀材料：gh pr view <N>（body 與連結的 ticket）、gh pr diff <N>、ticket 的驗收條件、
-   PR 引用的 validation 檔，以及相關設計文件（docs/spec.md、docs/design/system-design.md、
-   docs/design/design-decisions.md 的相關列）。不要讀 ledger、progress.md 或 docs/reports/。
-3. 第 2 輪起：讀上一則 senior review 與作者之後的回覆。對上一輪每條 finding 逐條確認是否真的修好，
-   再審新增的 diff。作者的說明只當線索，以程式與測試為準。
-4. 需要跑測試時：
-   git worktree add --detach /tmp/gigaxfer-review-<N> <sha>
-   依 goal.md「環境事實與修法」的 export 跑測試，跑完：
-   git worktree remove --force /tmp/gigaxfer-review-<N>
-5. 依「留言格式」把內容寫到 /tmp/gigaxfer-review-<N>.md，再貼上：
-   gh pr review <N> --comment --body-file /tmp/gigaxfer-review-<N>.md
-6. 回報一行：PR 編號、輪次、VERDICT。
-```
+reviewer 的完整指示在腳本的 prompt 裡，重點是：讀本檔的審查標準與留言格式；不讀 ledger 與 docs/reports/；第 2 輪起逐條確認上一輪 finding，以程式與測試為準。
 
 ## 審查標準
 
@@ -74,8 +57,9 @@ claude --model opus
 
 ## 留言格式
 
+標記行 `<!-- senior-review round: <round>; head: <完整 sha>; reviewer: <工具/模型> -->` 由腳本加，reviewer 從下面第一行開始寫。
+
 ```
-<!-- senior-review round: <round>; head: <完整 sha> -->
 **Senior review 第 <round> 輪**，head `<sha 前 7 碼>`
 
 **阻擋**
@@ -107,4 +91,4 @@ VERDICT: CHANGES
 
 ## 停止
 
-使用者說停，或 `gh` 認證失效、網路中斷連續三輪。停下時不需要補寫任何東西。
+在執行巡邏的 terminal 按 Ctrl+C。`gh` 認證失效或網路中斷時，腳本每輪報錯後繼續重試，不會留下半則留言。

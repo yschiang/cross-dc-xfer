@@ -22,7 +22,7 @@
 
 ## 每個 feature 的固定流程
 
-每個 P0N 都走這四步，全部自動化；**唯一不自動化的是 merge**。review 不由本迴圈做：常駐 senior reviewer 是另一個 session（見 [reviewer.md](reviewer.md)），它看到 PR 的新 commit 就審，結論直接留在 PR。
+每個 P0N 都走這四步，全部自動化；**唯一不自動化的是 merge**。review 不由本迴圈做：常駐的 review 巡邏（見 [reviewer.md](reviewer.md)，主版本由 Codex 審）看到 PR 的新 commit 就審，結論直接留在 PR。
 
 1. **Ticket**：GitHub issue 一個 feature 一張，內容是 AC 清單（範本：issue #1）。已有 ticket 就沿用。
 2. **實作**：`superpowers:subagent-driven-development`，每 task 審查、整分支 whole-branch review（opus）＋ fix loop、寫 `docs/validation/P0N-validation.md`（AC 逐項證據）。這些是作者自查，不取代 senior review。
