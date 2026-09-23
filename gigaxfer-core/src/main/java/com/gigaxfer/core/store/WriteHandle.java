@@ -53,6 +53,7 @@ public final class WriteHandle implements AutoCloseable {
     private volatile Lifecycle lifecycle = Lifecycle.WRITING;
     private volatile String failedOp;
     private volatile FinalizeResult.Failure failure; // Finalize 的終態結果；之後每次 finalizeWrite 原樣回
+    private boolean linkOutcomeUnknown; // 本 handle 送出的 link-key 逾時、結果未知（D51 修 2）；單執行緒使用
 
     WriteHandle(LocalStore store, FileIdentity id, String dataClass, UUID uuid, Path writing, FileChannel channel) {
         this.store = store;
@@ -265,6 +266,7 @@ public final class WriteHandle implements AutoCloseable {
                 });
             } catch (NfsTimeoutException e) {
                 // 已送出、結果未知：保留 operation ownership 直到它真正結束（D51 修 2）。
+                linkOutcomeUnknown = true;
                 if (e.inFlight() != null) store.linkSent(id, e.inFlight());
                 throw e;
             } catch (FileAlreadyExistsException e) {
@@ -282,6 +284,11 @@ public final class WriteHandle implements AutoCloseable {
             return new FinalizeResult.PendingConfirmation(e.op(),
                 e instanceof NfsBusyException ? "nfs pool exhausted" : "nfs timeout");
         } catch (IOException e) {
+            if (linkOutcomeUnknown) {
+                // 本 handle 送出的 link 可能已發布（SR-04、D51 修 2、D53 修）：查證途中的 I/O 錯誤（stat-key、
+                // read-manifest、digest-key…）不是結論，維持 PENDING、不清暫存，故障解除後重呼再查。
+                return new FinalizeResult.PendingConfirmation("verify-link", e.toString());
+            }
             return fail(FailureReason.IO, e.toString());
         }
     }

@@ -6,6 +6,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -53,6 +55,25 @@ class WriteHandleLifecycleTest {
         assertThat(h.writingPath()).doesNotExist();
         h.discard(); // 已刪：冪等
         assertThat(h.finalizeWrite()).isSameAs(r);
+    }
+
+    /**
+     * SR-04／D51 修 2：link-key 已完成但回覆遺失 → Pending；下一次查證遇到一次 EIO 不得變成終態 Failure，
+     * 仍回 Pending，故障解除後同一 handle 收斂為 Success。
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"stat-key", "read-manifest", "digest-key"})
+    void transient_io_while_verifying_unknown_link_stays_pending(String op) throws Exception {
+        WriteHandle h = store.beginWrite("mes", "metrology", "V-" + op);
+        h.stream().write("v".getBytes(StandardCharsets.UTF_8));
+        nfs.dropAfter("link-key");
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
+
+        nfs.failBefore(op);
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
+
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
+        assertThat(root.resolve("P3/mes/metrology/2026-09-22/08/V-" + op)).hasContent("v");
     }
 
     /** 刪除遇到一般 IOException（EACCES、EIO…）也不算已放棄：handle 中毒，finalizeWrite 不得發布。 */
