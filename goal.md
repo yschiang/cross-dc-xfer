@@ -24,8 +24,8 @@
 
 每個 P0N 都走這四步，全部自動化；**唯一不自動化的是 merge**。review 由本迴圈觸發、但不由本迴圈執行：每次 push 後跑 `scripts/review-patrol.sh <PR 編號>`，腳本產生 prompt、叫全新的 Codex 行程審、把結論原樣貼成 PR 留言（見 [reviewer.md](reviewer.md)）。本迴圈只按開始，不寫 review 指示、不轉述結果。
 
-1. **Ticket**：GitHub issue 一個 feature 一張，內容是 AC 清單（範本：issue #1）。已有 ticket 就沿用。
-2. **實作**：`superpowers:subagent-driven-development`，每 task 審查、整分支 whole-branch review（opus）＋ fix loop、寫 `docs/validation/P0N-validation.md`（AC 逐項證據）。這些是作者自查，不取代 senior review。
+1. **Ticket**：GitHub issue 一個 feature 一張，內容是 AC 清單（範本：issue #1），AC 引用 P00 roadmap 該 P「負責 F」欄的故障列。已有 ticket 就沿用。
+2. **實作**：`superpowers:subagent-driven-development`，每 task 審查、整分支 whole-branch review（opus）＋ fix loop、寫 `docs/validation/P0N-validation.md`（AC 逐項證據）。plan 依 system-design §6 測試策略，為負責的每條 F 列出測試矩陣（D57）。這些是作者自查，不取代 senior review。
 3. **PR**：push feature 分支、開 PR。base 依 stacked 順序（上一個 P0N 未 merge 就以它的分支為 base）。body 必含：ticket 連結（`Closes #N`）、AC 對照、validation doc 路徑、測試結果、已知 parked 項。CI 綠後，在背景跑 `scripts/review-patrol.sh <PR 編號>` 觸發 senior review，即完成本步；不等它跑完。
 4. **回應 review**：見下節「每輪先處理 review 留言」。本迴圈不自己派 reviewer、不寫 `prN-review.md`。
 
@@ -35,7 +35,7 @@
 
 每輪 loop 開始、接續 feature 之前，先查本迴圈開的每個 open PR，找最新一則含 `<!-- senior-review` 的留言：
 
-- **第 1 輪 `VERDICT: CHANGES`，且留言的 `head:` 等於 PR 目前的 head**：逐條處理阻擋項，修正並補測試，或說明不修的理由；跑測試後 commit、push 同一分支；在 PR 留一則回覆，逐條列 finding、處理方式與 commit；再在背景跑 `scripts/review-patrol.sh <PR 編號>` 觸發第 2 輪。
+- **第 1 輪 `VERDICT: CHANGES`，且留言的 `head:` 等於 PR 目前的 head**：逐條處理阻擋項：先補能重現缺陷的測試並確認它在修正前失敗，再修程式；或說明不修的理由；跑測試後 commit、push 同一分支；在 PR 留一則回覆，逐條列 finding、處理方式與 commit；再在背景跑 `scripts/review-patrol.sh <PR 編號>` 觸發第 2 輪。
 - **第 2 輪仍是 CHANGES**：不再修，列進早晨報告「需要你決定」。只有使用者明確裁定要修時才修，修完用 `MAX_ROUNDS=3 scripts/review-patrol.sh <PR 編號>` 追加一輪；不得自行調高 `MAX_ROUNDS`。
 - **`VERDICT: DESIGN`**：不修實作，寫進報告 §4；不開下一個 PR（停止條件 6），已開的下游 PR 保留。
 - **`CLEAN`，或還沒有 review**：不動，繼續 feature。
