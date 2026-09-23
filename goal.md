@@ -36,7 +36,7 @@
 每輪 loop 開始、接續 feature 之前，先查本迴圈開的每個 open PR，找最新一則含 `<!-- senior-review` 的留言：
 
 - **第 1 輪 `VERDICT: CHANGES`，且留言的 `head:` 等於 PR 目前的 head**：逐條處理阻擋項，修正並補測試，或說明不修的理由；跑測試後 commit、push 同一分支；在 PR 留一則回覆，逐條列 finding、處理方式與 commit；再在背景跑 `scripts/review-patrol.sh <PR 編號>` 觸發第 2 輪。
-- **第 2 輪仍是 CHANGES**：不再修，列進早晨報告「需要你決定」。
+- **第 2 輪仍是 CHANGES**：不再修，列進早晨報告「需要你決定」。只有使用者明確裁定要修時才修，修完用 `MAX_ROUNDS=3 scripts/review-patrol.sh <PR 編號>` 追加一輪；不得自行調高 `MAX_ROUNDS`。
 - **`VERDICT: DESIGN`**：不修實作，寫進報告 §4；不開下一個 PR（停止條件 6），已開的下游 PR 保留。
 - **`CLEAN`，或還沒有 review**：不動，繼續 feature。
 

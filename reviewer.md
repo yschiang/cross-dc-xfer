@@ -93,7 +93,7 @@ VERDICT: CHANGES
 
 ## 規則
 
-- **每個 PR 最多兩輪。** 第 2 輪仍是 CHANGES，由人決定。
+- **每個 PR 最多兩輪。** 第 2 輪仍是 CHANGES，由人決定。人裁定要再修時，修完用 `MAX_ROUNDS=3 scripts/review-patrol.sh <PR 編號>` 追加一輪；寫碼迴圈不得自行調高。
 - **只用留言。** 兩個 session 用同一個 GitHub 帳號，GitHub 不允許自己 approve 自己的 PR，一律 `gh pr review --comment`。
 - **不寫碼。** 問題只寫在留言，修正是作者的事。
 - **結論依程式與測試。** 作者在留言裡反駁不改變結論；下一輪重新依程式與測試判斷。

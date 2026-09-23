@@ -9,13 +9,14 @@
 #
 #   REVIEWER=codex|opencode|claude     預設 codex
 #   REVIEWER_MODEL=<模型 ID>           不設就用該工具的預設模型
+#   MAX_ROUNDS=<n>                     預設 2；只有人裁定追加時才調高
 set -euo pipefail
 # ponytail: 本機 /usr/local 的 git 是 x86（goal.md「環境事實」），arm64 的放前面
 export PATH=/opt/homebrew/bin:/usr/bin:/bin:$PATH
 cd "$(git rev-parse --show-toplevel)"
 repo_root=$PWD
 REVIEWER=${REVIEWER:-codex}
-MAX_ROUNDS=2
+MAX_ROUNDS=${MAX_ROUNDS:-2}   # 人裁定追加一輪時用 MAX_ROUNDS=3
 MARK='<!-- senior-review'
 
 run_reviewer() { # $1 工作目錄  $2 prompt 檔  $3 輸出檔
