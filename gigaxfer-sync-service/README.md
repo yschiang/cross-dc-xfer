@@ -45,8 +45,8 @@ cp v1.json /var/lib/gigaxfer/config/active.json   # 內容 = 設定檔格式，s
 CD pipeline 把新版本寫成 `candidate.json.tmp` 後 rename 為 `candidate.json`（一次性、不可觀察到半寫檔——sync service 只認 `candidate.json`，`.tmp` 一律忽略）。下一次啟動（`systemctl restart`）時：
 
 1. 有 `candidate.json`：驗證 schema、`version` 嚴格遞增、`policy` 段與現行（active，缺則 lkg）完全相同、`fixed` 段若存在須等於 v1 固定常數。
-   - 通過 → `active.json` rename 為 `lkg.json`、`candidate.json` rename 為 `active.json`，用新版本。
-   - 不通過 → `candidate.json` 留在原地（供 ops 檢查修正）、`activation_failure_count` 記 1、process 用現行 `active.json`（或其缺失時的 `lkg.json`）繼續啟動。
+   - 通過 → 把驗證過的內容寫成 `active.json.tmp` 並 fsync，`active.json` rename 為 `lkg.json`、`active.json.tmp` rename 為 `active.json`，用新版本；`candidate.json` 仍是同一份內容才刪除（啟用期間 CD 又換上新 candidate 時保留，下次啟動再驗）。內容與 `active.json` 完全相同的 candidate 視為已生效，直接刪除。
+   - 不通過（含 `candidate.json` 讀不到、或啟用途中 I/O 失敗）→ `candidate.json` 留在原地（供 ops 檢查修正）、`activation_failure_count` 記 1、process 用現行 `active.json`（或其缺失時的 `lkg.json`）繼續啟動。`active.json` 讀不到（權限、I/O 錯誤）與內容不合法一樣退回 `lkg.json`。
 2. 沒有 `candidate.json`：直接用 `active.json`；缺失時退回 `lkg.json`。
 
 設定物件在 process 內不可變、不熱載入；改 operational policy 一律是「CD 放新 candidate → `systemctl restart`」，執行中改動 `active.json` 檔案內容不會影響記憶體中的設定（見 `PolicyEndpointTest.config_is_immutable_while_process_runs`）。

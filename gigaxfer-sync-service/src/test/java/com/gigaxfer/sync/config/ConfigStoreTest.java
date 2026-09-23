@@ -10,6 +10,10 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFilePermission;
+import java.util.Set;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -93,10 +97,13 @@ class ConfigStoreTest {
     @Test
     void rejects_candidate_with_non_increasing_version_and_keeps_it() throws Exception {
         put("active.json", withVersion(fixture(), 3));
-        put("candidate.json", withVersion(fixture(), 3));
+        // 同版本但內容不同（同 bytes 的 candidate 視為已生效，見 candidate_identical_to_active_is_cleared_without_failure）
+        String sameVersionChanged = withVersion(fixture(), 3).replace("\"pending_limit\": 200", "\"pending_limit\": 300");
+        assertThat(sameVersionChanged).isNotEqualTo(withVersion(fixture(), 3));
+        put("candidate.json", sameVersionChanged);
         ConfigActivation a = new ConfigStore(dir).load();
         assertThat(a.config().version()).isEqualTo(3L);
-        assertThat(a.activationFailure()).isPresent().get().asString().contains("version");
+        assertThat(a.activationFailure()).hasValueSatisfying(r -> assertThat(r).contains("version"));
         assertThat(dir.resolve("candidate.json")).exists();
         assertThat(dir.resolve("lkg.json")).doesNotExist();
     }
@@ -193,5 +200,89 @@ class ConfigStoreTest {
         ConfigActivation a = new ConfigStore(dir).load();
         assertThat(a.config().version()).isEqualTo(3L);
         assertThat(a.activationFailure()).isEmpty();
+    }
+
+    /** 讓檔案對本 process 不可讀；以 root 執行時權限不生效，測試跳過。 */
+    private void makeUnreadable(String name) throws IOException {
+        Path p = dir.resolve(name);
+        Files.setPosixFilePermissions(p, Set.<PosixFilePermission>of());
+        Assumptions.assumeFalse(Files.isReadable(p), "running as root: file permissions not enforced");
+    }
+
+    @Test
+    void unreadable_active_falls_back_to_lkg() throws Exception {
+        put("active.json", withVersion(fixture(), 3));
+        put("lkg.json", withVersion(fixture(), 2));
+        makeUnreadable("active.json");
+        ConfigActivation a = new ConfigStore(dir).load();
+        assertThat(a.source()).isEqualTo(ConfigActivation.Source.LKG);
+        assertThat(a.config().version()).isEqualTo(2L);
+        assertThat(a.activationFailure()).hasValueSatisfying(r -> assertThat(r).contains("active.json unreadable"));
+    }
+
+    @Test
+    void unreadable_candidate_is_rejected_and_active_kept() throws Exception {
+        put("active.json", withVersion(fixture(), 3));
+        put("candidate.json", withVersion(fixture(), 4));
+        makeUnreadable("candidate.json");
+        ConfigActivation a = new ConfigStore(dir).load();
+        assertThat(a.source()).isEqualTo(ConfigActivation.Source.ACTIVE);
+        assertThat(a.config().version()).isEqualTo(3L);
+        assertThat(a.activationFailure()).hasValueSatisfying(r -> assertThat(r).contains("candidate.json rejected"));
+        assertThat(dir.resolve("candidate.json")).exists();
+    }
+
+    /** 安裝途中 I/O 失敗（此處 lkg.json 位置被非空目錄占住，active→lkg 失敗）也算 candidate 被拒，不讓 process 起不來。 */
+    @Test
+    void activation_io_failure_keeps_running_config_and_candidate() throws Exception {
+        put("active.json", withVersion(fixture(), 3));
+        put("candidate.json", withVersion(fixture(), 4));
+        Files.createDirectories(dir.resolve("lkg.json"));
+        Files.writeString(dir.resolve("lkg.json").resolve("occupied"), "x");
+        ConfigActivation a = new ConfigStore(dir).load();
+        assertThat(a.config().version()).isEqualTo(3L);
+        assertThat(a.source()).isEqualTo(ConfigActivation.Source.ACTIVE);
+        assertThat(a.activationFailure()).hasValueSatisfying(r -> assertThat(r).contains("activation failed"));
+        assertThat(ConfigCodec.decode(Files.readAllBytes(dir.resolve("active.json"))).version()).isEqualTo(3L);
+        assertThat(dir.resolve("candidate.json")).exists();
+    }
+
+    /** D17：CD 在驗證與安裝之間換上改了 Policy 的 candidate，它不得成為 active；留給下次啟動重驗並被拒。 */
+    @Test
+    void candidate_replaced_after_validation_is_not_activated() throws Exception {
+        put("active.json", withVersion(fixture(), 3));
+        put("candidate.json", withVersion(fixture(), 4));
+        String v6BadPolicy = withVersion(fixture(), 6).replace("\"targets\": [\"P1\"]", "\"targets\": [\"P1\", \"P3\"]");
+        assertThat(v6BadPolicy).isNotEqualTo(withVersion(fixture(), 6));
+        Runnable cdSwap = () -> {
+            try {
+                put("candidate.json.tmp", v6BadPolicy);
+                Files.move(dir.resolve("candidate.json.tmp"), dir.resolve("candidate.json"), StandardCopyOption.ATOMIC_MOVE);
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        };
+
+        ConfigActivation first = new ConfigStore(dir, cdSwap).load();
+        assertThat(first.config().version()).isEqualTo(4L);
+        assertThat(ConfigCodec.decode(Files.readAllBytes(dir.resolve("active.json"))).version()).isEqualTo(4L);
+        assertThat(Files.readString(dir.resolve("candidate.json"))).isEqualTo(v6BadPolicy);
+
+        ConfigActivation second = new ConfigStore(dir).load();
+        assertThat(second.config().version()).isEqualTo(4L);
+        assertThat(second.activationFailure()).hasValueSatisfying(r -> assertThat(r).contains("policy"));
+    }
+
+    /** 安裝完成、刪 candidate 前 crash：下次啟動看到同 bytes 的 candidate，補刪且不算失敗。 */
+    @Test
+    void candidate_identical_to_active_is_cleared_without_failure() throws Exception {
+        put("active.json", withVersion(fixture(), 4));
+        put("lkg.json", withVersion(fixture(), 3));
+        put("candidate.json", withVersion(fixture(), 4));
+        ConfigActivation a = new ConfigStore(dir).load();
+        assertThat(a.config().version()).isEqualTo(4L);
+        assertThat(a.activationFailure()).isEmpty();
+        assertThat(dir.resolve("candidate.json")).doesNotExist();
+        assertThat(ConfigCodec.decode(Files.readAllBytes(dir.resolve("lkg.json"))).version()).isEqualTo(3L);
     }
 }
