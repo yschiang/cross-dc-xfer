@@ -71,7 +71,7 @@ public final class LocalStore {
         // 命名違約在碰 NFS 前就丟 IllegalArgumentException。dataClass 同樣是原始路徑片段
         // （contentDir 直接 resolve 它），沒檢查的話 "../.." 會逃出 namespace 樹。
         FileIdentity id = new FileIdentity(sourceNode, namespace, logicalKey);
-        FileIdentity.requireSegment(dataClass, "dataClass");
+        FileIdentity.requireSegment(dataClass, "dataClass", FileIdentity.MAX_DATA_CLASS_BYTES);
         Optional<String> reject = gate.rejectReason(namespace, dataClass);
         if (reject.isPresent()) throw new WriteRejectedException(WriteRejectedException.Reason.REJECTED, reject.get());
 

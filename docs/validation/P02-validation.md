@@ -11,6 +11,10 @@ Ticket: [P02：Node 本地同步服務基礎 #1](https://github.com/yschiang/cro
 - 上游 P01: `86360ac`
 - Commit 序列：`650e49a` Task1、`6f935a7`+`1617096` Task2、`0f3f916` Task3、`eab8df6`/`83e4ff0`/`7191331` 1R–3R、`62bab04`+`070c2c8` Task4、`0fbe020`+`9c87006` Task5、`99521aa` Task6、`947d789` Task7、`75d9cd2` Task6 fix round 1（審查 H-1：`getRequestURI` 未解碼／含 `;` 可繞過 filter → 改 `UrlPathHelper` 解碼路徑 + 豁免清單預設全保護）、`a53c4f5` 文件同步 fail-closed 認證行為、`e4bb292` re-review nits（dot-segment fail-closed、RFC 7235 行為測試）、`6413b34` final-review fix batch（health gauge supplier 化、readiness DOWN/UP 斷言、config 缺 active 的 activationFailure、readiness group 加 readinessState、DB query timeout、/policy 不洩漏 operational）+ 本批 docs 更新。
 
+## PR #5 獨立 review 後修正（2026-09-23）
+
+review 全文 `docs/reports/pr5-review.md`。必修三項已修：① 片段 UTF-8 位元組上限對齊 V1 欄寬（`FileIdentityTest.segment_limits_are_utf8_bytes_matching_schema_widths`、`SchemaTest.identity_column_widths_match_core_segment_limits`）；② `ConfigStore` 不再重讀 candidate；③ active 損毀信號保留（`corrupt_active_does_not_overwrite_good_lkg_when_candidate_activates` 加斷言）。建議 9 項與設計文件 4 項見 follow-up issue。P02-11 驗到的是「契約工具可用」（測試用 `EchoCallerController`），端點遵守契約留 P04。
+
 ## 環境
 
 - 硬體/OS：arm64 macOS，Darwin 27.0.0
@@ -34,9 +38,9 @@ mvn test
 
 | 模組 | 測試數 | Failures | Errors |
 | --- | --- | --- | --- |
-| gigaxfer-core | 120 | 0 | 0 |
-| gigaxfer-sync-service | 55 | 0 | 0 |
-| 合計 | 175 | 0 | 0 |
+| gigaxfer-core | 121 | 0 | 0 |
+| gigaxfer-sync-service | 56 | 0 | 0 |
+| 合計 | 177 | 0 | 0 |
 
 （測試類別清單：核對用 `grep -rn "void " gigaxfer-*/src/test` 取實際方法名，下表逐 AC 列出對應項。）
 
@@ -48,13 +52,13 @@ mvn test
 | P02-02 Policy 登錄契約 | Task 1R、3R | `PolicyEndpointTest.policy_endpoint_returns_version_and_normalised_policy_without_auth`、`ConfigCodecTest.registry_rejects_unregistered_namespace_but_allows_local_only_class`、`ConfigCodecTest.namespace_registry_is_validated_and_part_of_policy_identity`、`ConfigCodecTest.rejects_target_not_in_nodes`、`ConfigCodecTest.rejects_source_as_its_own_target`、`ConfigCodecTest.rejects_duplicate_source_class_pair` | 通過 | Namespace 未登錄不可 write；空 targets 表示已登錄但僅本地 |
 | P02-03 設定驗證 | Task 1、1R、2 | `ConfigCodecTest`（20 個測試：`rejects_unknown_field`、`rejects_wrong_schema_version`、`fixed_segment_may_be_omitted_and_then_defaults_to_v1`、`rejects_fixed_segment_that_differs_from_v1`、`rejects_empty_nodes`、`rejects_more_than_ten_nodes`、`rejects_bad_node_name_segment`、`rejects_peer_token_for_unknown_node_and_bad_hex`、`rejects_duplicate_peer_token_hash`、`rejects_capacity_reject_not_below_alert`、`rejects_non_positive_operational_value` 等）、`ConfigStoreTest.rejects_candidate_with_non_increasing_version_and_keeps_it`、`ConfigStoreTest.rejects_candidate_whose_policy_differs`、`ConfigStoreTest.rejects_candidate_that_changes_registered_namespaces` | 通過 | schema 合法性、version 嚴格遞增、policy 段相等、fixed 段等於 v1 常數、token 雜湊唯一皆有覆蓋 |
 | P02-04 安全啟用 | Task 2、3、3R | `ConfigStoreTest.activates_valid_candidate_and_rotates_active_to_lkg`、`ConfigStoreTest.accepts_candidate_that_only_changes_operational_and_node_order`、`PolicyEndpointTest.config_is_immutable_while_process_runs` | 通過 | 驗證通過才 rename；運行期改 `active.json` 檔案內容不影響記憶體中設定 |
-| P02-05 失敗與回退 | Task 2、2R、3 | `ConfigStoreTest.rejects_malformed_candidate_and_keeps_active`、`falls_back_to_lkg_when_active_missing`、`falls_back_to_lkg_when_active_is_corrupt`、`corrupt_active_does_not_overwrite_good_lkg_when_candidate_activates`、`corrupt_active_without_lkg_refuses_even_with_good_candidate`、`candidate_alone_does_not_bypass_manual_initial_active_setup`、`candidate_is_validated_against_lkg_when_active_missing`、`PolicyEndpointTest.config_metrics_are_registered_with_node_tag`（`activation_failure_count` 基準值 0） | 通過 | 拒絕留 candidate 原地；壞 active 不覆蓋好的 lkg；candidate-only 初始化拒絕 |
+| P02-05 失敗與回退 | Task 2、2R、3 | `ConfigStoreTest.rejects_malformed_candidate_and_keeps_active`、`falls_back_to_lkg_when_active_missing`、`falls_back_to_lkg_when_active_is_corrupt`、`corrupt_active_does_not_overwrite_good_lkg_when_candidate_activates`、`corrupt_active_without_lkg_refuses_even_with_good_candidate`、`candidate_alone_does_not_bypass_manual_initial_active_setup`、`candidate_is_validated_against_lkg_when_active_missing`、`PolicyEndpointTest.config_metrics_are_registered_with_node_tag`（`activation_failure_count` 基準值 0） | 通過（有缺口） | 拒絕留 candidate 原地；壞 active 不覆蓋好的 lkg 且 `activationFailure` 保留損毀信號（PR #5 review 必修 3）；candidate-only 初始化拒絕。缺口：`activation_failure_count = 1` 的 gauge 接線沒有測試（review 建議 3，follow-up） |
 | P02-06 中斷恢復 | Task 2 | `ConfigStoreTest.crash_between_renames_recovers_on_next_start`、`ConfigStoreTest.ignores_candidate_tmp_still_being_written_by_cd` | 通過 | 設定啟用不觸碰 DB；義務與控制狀態由 schema 持有（Task 4） |
 | P02-07 schema 與冪等 bootstrap | Task 4 | `SchemaTest.migration_runs_in_background_and_creates_all_tables`、`SchemaTest.node_meta_has_one_incarnation_and_seq_counters_start_at_zero`、`SchemaTest.bootstrap_is_idempotent_across_restarts`、`SchemaTest.obligation_state_check_constraint_rejects_unknown_state`、`SchemaTest.remote_received_keeps_source_selected_path_without_local_source_row` | 通過 | 含 `received.content_path`、非零計數器保留；欄位改名見 design-decisions「P02 偏差」⑥ |
 | P02-08 DB 故障恢復 | Task 4、5 | `DbOutageRecoveryTest.db_becomes_ready_without_restart_after_outage` | 通過 | DB 不可用時 process 不退出、`/policy` 仍回應；DB 恢復後不重啟即轉 ready（`gigaxfer.db-retry-millis` 測試縮短為 200ms） |
 | P02-09 health 語意 | Task 5 | `HealthEndpointTest.readiness_is_up_when_db_migrated_and_nfs_root_reachable`、`HealthEndpointTest.nfs_component_is_down_when_root_disappears_and_recovers`、`HealthEndpointTest.liveness_does_not_depend_on_db_or_nfs`、`NfsTimeoutHealthTest.nfs_component_is_down_when_probe_times_out`、`HealthGaugeTest.gauges_reflect_state_without_prior_health_request`（不經 health 請求，`db_health`/`storage_health` 於 scrape 時即時探測） | 通過 | 含 NFS timeout；liveness 只看 process 存活，不受 DB/NFS 影響 |
 | P02-10 Node 認證 | Task 6 | `NodeAuthFilterUnitTest`（`protected_paths_require_auth_even_when_obfuscated` 對 `/pending;x=1`、`/%70ending` 等參數化、`exempt_paths_need_no_token`）、`Sha256Test.hex_of_p1_secret_matches_fixture`；`NodeAuthFilterTest`（10 個測試：`own_token_is_read_from_secret_file_and_trimmed`、`missing_authorization_is_401`、`unknown_token_is_401`、`non_bearer_scheme_is_401`、`known_token_resolves_caller_node`、`target_param_equal_to_caller_is_allowed`、`target_param_different_from_caller_is_403`、`node_internal_endpoints_need_no_token`、`protected_prefixes_cover_file_subpaths`、`received_does_not_apply_target_equals_caller_rule`） | 通過 | 401 = 無/未知 token；403 = target 與 caller 不同（D14 修 2） |
-| P02-11 角色身分 | Task 6 | `NodeAuthFilterTest.known_token_resolves_caller_node`、`NodeAuthFilterTest.target_param_different_from_caller_is_403`、`NodeAuthFilterTest.received_does_not_apply_target_equals_caller_rule` | 通過 | `/received` 不套用 target==caller 規則；「只列 caller 為 Source 的列」的實作留給 P04 |
+| P02-11 角色身分（有缺口） | Task 6 | `NodeAuthFilterTest.known_token_resolves_caller_node`、`NodeAuthFilterTest.target_param_different_from_caller_is_403`、`NodeAuthFilterTest.received_does_not_apply_target_equals_caller_rule` | 通過 | `/received` 不套用 target==caller 規則；「只列 caller 為 Source 的列」的實作留給 P04 |
 | P02-12 可交接可重現 | Task 7 | `gigaxfer-sync-service/README.md`、本檔（`docs/validation/P02-validation.md`）、`mvn test` 175/175 全綠（Task 7 當時 139） | 通過 | 含首次初始化、設定更新/回退操作、DB 斷線觀察、認證 curl 範例、health/metrics 範例、HTTPS 部署要求 |
 
 ## 尚未驗證

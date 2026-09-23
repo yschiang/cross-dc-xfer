@@ -28,6 +28,21 @@ class FileIdentityTest {
         assertThatThrownBy(() -> new FileIdentity("P3", "mes", bad)).isInstanceOf(IllegalArgumentException.class);
     }
 
+    /** 上限是 UTF-8 位元組（Oracle VARCHAR BYTE 語意），不是字元數。 */
+    @Test
+    void segment_limits_are_utf8_bytes_matching_schema_widths() {
+        String key512 = "k".repeat(512);
+        assertThat(new FileIdentity("P3", "mes", key512).logicalKey()).hasSize(512);
+        assertThatThrownBy(() -> new FileIdentity("P3", "mes", "k".repeat(513)))
+            .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("512");
+        String cjk171 = "批".repeat(171); // 171 × 3 bytes = 513 > 512，字元數卻遠小於 512
+        assertThatThrownBy(() -> new FileIdentity("P3", "mes", cjk171)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new FileIdentity("n".repeat(65), "mes", "k")).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new FileIdentity("P3", "s".repeat(129), "k")).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> FileIdentity.requireSegment("c".repeat(129), "dataClass", FileIdentity.MAX_DATA_CLASS_BYTES))
+            .isInstanceOf(IllegalArgumentException.class);
+    }
+
     @Test
     void null_segment_rejected() {
         assertThatThrownBy(() -> new FileIdentity(null, "mes", "k")).isInstanceOf(IllegalArgumentException.class);

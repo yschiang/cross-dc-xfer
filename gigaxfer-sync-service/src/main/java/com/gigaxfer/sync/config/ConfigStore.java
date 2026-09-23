@@ -43,7 +43,6 @@ public final class ConfigStore {
                 ? Optional.of("active.json unreadable, using lkg")
                 : Optional.of("active.json missing, using lkg");
         }
-        ConfigActivation.Source source = current.isPresent() ? ConfigActivation.Source.ACTIVE : ConfigActivation.Source.LKG;
         Optional<NodeConfig> baseline = current.isPresent() ? current : read(lkg);
 
         if (baseline.isEmpty()) {
@@ -51,27 +50,24 @@ public final class ConfigStore {
         }
 
         if (Files.exists(candidate)) {
-            String reason = validateCandidate(candidate, baseline.orElseThrow());
-            if (reason == null) {
-                NodeConfig accepted;
-                try {
-                    accepted = ConfigCodec.decode(Files.readAllBytes(candidate));
-                } catch (InvalidConfigException e) {
-                    throw new IllegalStateException("candidate validated a moment ago", e);
-                }
+            try {
+                // 驗證與啟用用同一份解碼結果：不重讀檔案，CD 在中間換掉 candidate 也繞不過 D17。
+                NodeConfig accepted = validateCandidate(candidate, baseline.orElseThrow());
                 if (current.isPresent()) {
                     Files.move(active, lkg, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
                 }
                 Files.move(candidate, active, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
                 log.info("activated config version {} (previous {})", accepted.version(), baseline.orElseThrow().version());
-                return new ConfigActivation(accepted, ConfigActivation.Source.ACTIVE, Optional.empty());
+                // failure 保留 active 損毀／缺失的信號（D45：用 lkg 並計失敗），即使 candidate 啟用成功。
+                return new ConfigActivation(accepted, ConfigActivation.Source.ACTIVE, failure);
+            } catch (InvalidConfigException e) {
+                log.warn("candidate.json rejected, left in place: {}", e.getMessage());
+                failure = Optional.of(e.getMessage());
             }
-            log.warn("candidate.json rejected, left in place: {}", reason);
-            failure = Optional.of(reason);
         }
 
         if (current.isPresent()) {
-            return new ConfigActivation(current.get(), source, failure);
+            return new ConfigActivation(current.get(), ConfigActivation.Source.ACTIVE, failure);
         }
         // current 缺 → baseline 就是 lkg，且已在上面確認非空。
         NodeConfig fromLkg = baseline.orElseThrow();
@@ -79,21 +75,21 @@ public final class ConfigStore {
         return new ConfigActivation(fromLkg, ConfigActivation.Source.LKG, failure);
     }
 
-    /** 回 null = 通過；否則為拒絕原因。呼叫點已保證 baseline 非空。 */
-    private static String validateCandidate(Path candidate, NodeConfig baseline) throws IOException {
+    /** 通過則回已解碼的 candidate；拒絕原因以 InvalidConfigException 帶出。呼叫點已保證 baseline 非空。 */
+    private static NodeConfig validateCandidate(Path candidate, NodeConfig baseline) throws IOException {
         NodeConfig c;
         try {
             c = ConfigCodec.decode(Files.readAllBytes(candidate));
         } catch (InvalidConfigException e) {
-            return "candidate invalid: " + e.getMessage();
+            throw new InvalidConfigException("candidate invalid: " + e.getMessage(), e);
         }
         if (c.version() <= baseline.version()) {
-            return "candidate version " + c.version() + " is not greater than current version " + baseline.version();
+            throw new InvalidConfigException("candidate version " + c.version() + " is not greater than current version " + baseline.version());
         }
         if (!c.policy().equals(baseline.policy())) {
-            return "candidate policy segment differs from current version " + baseline.version() + " (policy is immutable in v1)";
+            throw new InvalidConfigException("candidate policy segment differs from current version " + baseline.version() + " (policy is immutable in v1)");
         }
-        return null;
+        return c;
     }
 
     private static Optional<NodeConfig> read(Path p) throws IOException {

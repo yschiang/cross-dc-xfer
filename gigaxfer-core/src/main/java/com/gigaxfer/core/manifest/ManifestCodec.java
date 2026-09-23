@@ -72,7 +72,7 @@ public final class ManifestCodec {
         }
         try {
             new FileIdentity(m.sourceNode(), m.namespace(), m.logicalKey());
-            FileIdentity.requireSegment(m.dataClass(), "data_class");
+            FileIdentity.requireSegment(m.dataClass(), "data_class", FileIdentity.MAX_DATA_CLASS_BYTES);
         } catch (IllegalArgumentException e) {
             throw new MalformedManifestException("source_node/namespace/data_class/logical_key invalid: " + e.getMessage(), e);
         }

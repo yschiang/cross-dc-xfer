@@ -67,6 +67,19 @@ class SchemaTest extends SyncTestSupport {
         jdbc.update("DELETE FROM file_identity WHERE logical_key = 'k1'");
     }
 
+    /** 欄寬與 core 的片段上限一致：邊界長度寫得進去，超一格就被 DB 拒絕。 */
+    @Test
+    void identity_column_widths_match_core_segment_limits() {
+        assertThat(db.awaitReady(Duration.ofSeconds(30))).isTrue();
+        String key512 = "w".repeat(com.gigaxfer.core.identity.FileIdentity.MAX_LOGICAL_KEY_BYTES);
+        String sql = "INSERT INTO file_identity (source_node, namespace, logical_key, data_class, size_bytes, digest, source_ready_at, content_path) "
+            + "VALUES ('P1','mes',?,'lot-log',1,'sha256:" + "0".repeat(64) + "',CURRENT_TIMESTAMP,?)";
+        jdbc.update(sql, key512, "P1/mes/lot-log/2026-09-20/02/" + key512);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> jdbc.update(sql, key512 + "x", "P1/mes/lot-log/2026-09-20/02/" + key512 + "x"))
+            .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        jdbc.update("DELETE FROM file_identity WHERE logical_key = ?", key512);
+    }
+
     @Test
     void remote_received_keeps_source_selected_path_without_local_source_row() {
         assertThat(db.awaitReady(Duration.ofSeconds(30))).isTrue();

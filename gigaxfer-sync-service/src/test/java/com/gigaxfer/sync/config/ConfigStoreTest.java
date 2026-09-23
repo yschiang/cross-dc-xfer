@@ -87,6 +87,7 @@ class ConfigStoreTest {
         assertThat(a.config().version()).isEqualTo(4L);
         assertThat(dir.resolve("candidate.json")).doesNotExist();
         assertThat(ConfigCodec.decode(Files.readAllBytes(dir.resolve("lkg.json"))).version()).isEqualTo(2L);
+        assertThat(a.activationFailure()).hasValueSatisfying(r -> assertThat(r).contains("active.json unreadable")); // D45：計失敗
     }
 
     @Test

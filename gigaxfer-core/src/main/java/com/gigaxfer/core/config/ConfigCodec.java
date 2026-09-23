@@ -85,20 +85,20 @@ public final class ConfigCodec {
         require(p.nodes().size() <= MAX_NODES, "policy.nodes must have at most " + MAX_NODES + " entries");
         Set<String> nodes = new HashSet<>();
         for (String n : p.nodes()) {
-            segment("policy.nodes", n);
+            segment("policy.nodes", n, FileIdentity.MAX_NODE_BYTES);
             require(nodes.add(n), "policy.nodes has duplicate " + n);
         }
         require(p.namespaces() != null, "policy.namespaces is required");
         Set<String> namespaces = new HashSet<>();
         for (String namespace : p.namespaces()) {
-            segment("policy.namespaces", namespace);
+            segment("policy.namespaces", namespace, FileIdentity.MAX_NAMESPACE_BYTES);
             require(namespaces.add(namespace), "policy.namespaces has duplicate " + namespace);
         }
         require(p.requiredTargets() != null, "policy.required_targets is required");
         Set<String> pairs = new HashSet<>();
         for (RequiredTargets rt : p.requiredTargets()) {
-            segment("required_targets.source_node", rt.sourceNode());
-            segment("required_targets.data_class", rt.dataClass());
+            segment("required_targets.source_node", rt.sourceNode(), FileIdentity.MAX_NODE_BYTES);
+            segment("required_targets.data_class", rt.dataClass(), FileIdentity.MAX_DATA_CLASS_BYTES);
             require(nodes.contains(rt.sourceNode()), "required_targets.source_node " + rt.sourceNode() + " not in policy.nodes");
             require(pairs.add(rt.sourceNode() + "\u0000" + rt.dataClass()),
                 "required_targets has duplicate (" + rt.sourceNode() + ", " + rt.dataClass() + ")");
@@ -136,9 +136,9 @@ public final class ConfigCodec {
         }
     }
 
-    private static void segment(String field, String value) throws InvalidConfigException {
+    private static void segment(String field, String value, int maxBytes) throws InvalidConfigException {
         try {
-            FileIdentity.requireSegment(value, field);
+            FileIdentity.requireSegment(value, field, maxBytes);
         } catch (IllegalArgumentException e) {
             throw new InvalidConfigException(e.getMessage(), e);
         }
