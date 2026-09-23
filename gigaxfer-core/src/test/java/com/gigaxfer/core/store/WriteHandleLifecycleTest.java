@@ -45,11 +45,14 @@ class WriteHandleLifecycleTest {
 
         assertThatThrownBy(h::discard).isInstanceOf(NfsUnavailableException.class);
         assertThat(h.writingPath()).exists();
-        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.Failure.class); // 刪除結果未定，不可發布
+        FinalizeResult r = h.finalizeWrite(); // 刪除結果未定，不可發布；原因是 discard，不是 stream 中毒
+        assertThat(((FinalizeResult.Failure) r).detail()).startsWith("discard delete unresolved at discard-writing");
+        assertThat(h.writingPath()).exists(); // finalizeWrite 不代 discard 清暫存
 
-        h.discard();
+        h.discard(); // 真的再刪一次
         assertThat(h.writingPath()).doesNotExist();
         h.discard(); // 已刪：冪等
+        assertThat(h.finalizeWrite()).isSameAs(r);
     }
 
     /** README 規則 5：Finalize 回 Failure 的 handle 可 discard；重呼 finalizeWrite 回同一個 Failure。 */
@@ -69,10 +72,11 @@ class WriteHandleLifecycleTest {
         assertThatThrownBy(() -> b.stream().write('x')).hasMessageContaining("handle failed");
         b.discard(); // 不丟 IllegalStateException
         assertThat(b.writingPath()).doesNotExist();
+        assertThat(b.finalizeWrite()).isSameAs(first); // discard 之後結論仍不變
         assertThat(root.resolve("P3/mes/metrology/2026-09-22/08/F1")).hasContent("one");
     }
 
-    /** 放棄的 Pending handle 其 link future 結束後，下一次登記會把它回收，不永久留在記憶體。 */
+    /** 放棄的 Pending handle 其 link future 結束後，下一次登記或 beginWrite 會把它回收，不永久留在記憶體。 */
     @Test
     void completed_link_futures_are_reclaimed_on_next_link_sent() throws Exception {
         CountDownLatch release = new CountDownLatch(1);
@@ -95,6 +99,8 @@ class WriteHandleLifecycleTest {
         release2.countDown();
         nfs.hung.get(1).get();
         assertThat(other.finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
+        store.beginWrite("mes", "metrology", "L3").discard(); // 沒有新 timeout 也會回收最後一批
+        assertThat(store.inFlightIdentities()).isZero();
         assertThat(Files.exists(root.resolve("P3/mes/metrology/2026-09-22/08/L1"))).isTrue();
     }
 }

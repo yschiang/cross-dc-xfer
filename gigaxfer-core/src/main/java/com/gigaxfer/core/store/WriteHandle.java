@@ -123,8 +123,14 @@ public final class WriteHandle implements AutoCloseable {
                 Files.deleteIfExists(writing);
             });
         } catch (NfsException e) {
-            lifecycle = Lifecycle.FAILED;
-            failedOp = e.op();
+            synchronized (stream) {
+                if (failure == null) {
+                    failure = new FinalizeResult.Failure(FailureReason.IO, failedOp != null
+                        ? "stream failed at " + failedOp
+                        : "discard delete unresolved at " + e.op());
+                }
+                lifecycle = Lifecycle.FAILED;
+            }
             throw new NfsUnavailableException(e.op(), e);
         }
         lifecycle = Lifecycle.DISCARDED;
@@ -145,7 +151,8 @@ public final class WriteHandle implements AutoCloseable {
      */
     public FinalizeResult finalizeWrite() {
         synchronized (stream) {
-            if (lifecycle == Lifecycle.FAILED) return failure != null ? failure : poisoned();
+            if (failure != null) return failure; // 終態結果不因之後的 discard() 改變
+            if (lifecycle == Lifecycle.FAILED) return poisoned();
             if (lifecycle == Lifecycle.DISCARDED) {
                 return new FinalizeResult.Failure(FailureReason.IO, "handle discarded");
             }
