@@ -39,6 +39,7 @@ Milestone：可完整驗收的有感能力
   - [有 Milestone 的大型需求](#有-milestone-的大型需求)
   - [沒有 Milestone 的一般需求](#沒有-milestone-的一般需求)
   - [單一 ticket 的文件交接：P03 ingest](#單一-ticket-的文件交接)
+- [Revision](#revision)
 
 ## 工作流
 
@@ -422,3 +423,9 @@ IngestService.java + IngestServiceTest.java
 | PR 與測試證據 | 實作、審查結果與 CI 測試報告，連回 ticket 與 plan |
 
 示例尚未建立。Member 完成後由 Reviewer 核對原子性與故障情境；Maintainer 合併，Feature 負責人確認相關整合驗收與下游依賴。
+
+## Revision
+
+| 日期 | 修訂 |
+| --- | --- |
+| 2026-09-24 | **新增 PR 巡邏，用不同模型的 reviewer。** 寫碼的 agent 不再自己 review：[巡邏腳本](scripts/review-patrol.sh)看到 PR 的新 commit，就叫一個全新的 Codex 行程審 diff，結論原樣貼成 PR 留言；作者每輪先處理 CHANGES，最多兩輪，merge 仍由人做。Claude 寫、Codex 審，兩邊不會有相同的盲點。做法見 [reviewer.md](reviewer.md)，opencode 版本見 [opencode-workflow.md](opencode-workflow.md) |
