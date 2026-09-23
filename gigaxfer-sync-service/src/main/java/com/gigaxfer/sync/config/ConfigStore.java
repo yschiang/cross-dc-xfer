@@ -77,7 +77,8 @@ public final class ConfigStore {
                 bytes = Files.readAllBytes(candidate);
                 if (current.isPresent() && Arrays.equals(bytes, Files.readAllBytes(active))) {
                     // 上次啟動已安裝這份 bytes，只差刪 candidate 就 crash：補刪，不算失敗。
-                    Files.deleteIfExists(candidate);
+                    // 經同一個比對再刪：CD 恰好在此刻換上的新 candidate 留給下次啟動。
+                    removeCandidateIfUnchanged(candidate, bytes);
                     return new ConfigActivation(current.get(), ConfigActivation.Source.ACTIVE, failure);
                 }
                 accepted = validateCandidate(bytes, baseline.get());

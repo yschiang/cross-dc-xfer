@@ -291,3 +291,53 @@ CLEAN
 - core README 規則 5（discard 刪除失敗 → 中毒、不發布；刪除成功才 DISCARDED）：⚠️ 只對 `NfsException` 成立；一般 `IOException` 會導致發布（必修 1，已重現）。
 - 「`LocalStore` 回收已結束的 link future」：✅ `linkSent` 與 `beginWrite` 兩個觸發點各有一個會失敗的測試；語意上只移除 `isDone()` 的 future，不改變 in-flight 判定。
 - 「Java 21 runtime 由 GitHub CI 跑過」：✅ 限於 `ad57714`；PR #6 head `fe582d9` 的 CI 也是 SUCCESS，但文件沒有引用它。
+
+
+---
+
+## 第 2 輪 scoped re-review（同一 opus reviewer，對 #6 `00b3be2`、#5 `c44b762` 與合併樹）
+
+# Scoped re-review：第 2 輪三項必修的修正
+
+範圍：只看 `00b3be2`（PR #6，discard）與 `c44b762`（PR #5，ConfigStore），審查對象是合併試跑樹 `.worktrees/review-merged` HEAD `1e1049c`。本機 `mvn -q test` 全綠：core 126、sync-service 61，共 **187**（coordinator 說 188，我數到的是 187，差 1，可能只是計數口徑不同）。上一輪的重現測試照新簽章改寫成「斷言修好後的行為」，另外新寫一個 crash 邊界測試。改寫後的測試放在 `scratchpad/review2-tmp/rr/`；複製進 worktree 跑完就刪了，連同 `target/` 內的 class 與 surefire 報告，最後 `git status --short` 為空。
+
+## 必修逐項
+
+- **必修 1（#6，discard 遇一般 IOException 仍可發布）**：✅ 已修。`ReviewDiscardReproTest` 做法同上一輪：寫 64 KiB，把暫存所在目錄 chmod 成唯讀，呼叫 `discard()` 得到 `AccessDeniedException`。之後 `finalizeWrite()` 現在回 `Failure[IO, "discard delete unresolved at discard-writing: java.nio.file.AccessDeniedException: …"]`，正式路徑不存在。目錄恢復可寫後再呼叫一次 `discard()`，暫存就被刪掉，`finalizeWrite()` 仍回同一個 `Failure`（以 `isSameAs` 斷言）。**不再重現。**新增的 `WriteHandleLifecycleTest.discard_hard_io_failure_poisons_handle_and_never_publishes`（`failBefore`）會在舊碼上失敗，能保護這次修正。
+- **必修 2（#5，IOException 讓 process 拒絕啟動）**：✅ 已修。`load()` 不再丟 `IOException`。`unreadable_active_with_valid_lkg_falls_back`：active 為 0000 時退回 lkg v2（`Source.LKG`），並帶失敗信號。`unreadable_candidate_with_valid_active_is_rejected`：candidate 為 0000 時用 active v3，candidate 留在原地，並帶失敗信號。**兩者都不再重現。**新測試 `activation_io_failure_keeps_running_config_and_candidate` 覆蓋安裝途中 `active→lkg` 失敗的情況。
+- **必修 3（#5，CD 在驗證與 rename 之間換檔，未驗證版本成為 active）**：✅ 已修。我保留上一輪的真實執行緒時序迴圈（不用新的 hook），跑 3000 次，另一執行緒在 0–300 µs 內以 ATOMIC_MOVE 換上改了 Policy 的 v6。結果是「磁碟上 active 與執行中版本不一致，或 active 成為 v6」**0 次**；CD 換上的 candidate 3000 次都被保留下來，留給下次啟動重驗。**不再重現。**修正者用 hook 寫的測試 `candidate_replaced_after_validation_is_not_activated` 也驗證了下次啟動會以「policy」理由拒絕那份 candidate。
+
+## crash 邊界（`ReviewConfigCrashBoundaryTest`，6 案全過）
+
+每個案例都先做出 crash 在該邊界時會留下的磁碟狀態，再啟動一次檢查結果。起點一律是 active v3、lkg v2、candidate v4：
+
+| crash 位置 | 磁碟狀態 | 下次啟動結果 |
+| --- | --- | --- |
+| tmp 寫到一半 | active v3、lkg v2、candidate v4、tmp 半截 | 截斷並重寫 tmp，完成啟用：跑 v4；active v4、lkg v3；candidate 已刪；無失敗信號 |
+| tmp 已 fsync，active→lkg 之前 | 同上，但 tmp 是完整的 v4 | 同上，收斂到 v4 |
+| active→lkg 之後，tmp→active 之前 | 沒有 active、lkg v3、candidate v4、tmp v4 | 以 lkg v3 為基準重新驗證 candidate，安裝後跑 v4；active v4、lkg v3。會帶「active.json missing」失敗信號，這個行為和修正前相同 |
+| 同上，但 CD 期間把 candidate 換成改了 Policy 的 v6 | 沒有 active、lkg v3、candidate v6（壞）、tmp v4 | 舊的 tmp v4 **不會被採信**；candidate 被拒，跑 lkg v3，`Source.LKG`，candidate 留在原地 |
+| tmp→active 之後，刪 candidate 之前 | active v4、lkg v3、candidate v4 | 內容逐位元組相同，補刪 candidate，無失敗信號；lkg 仍是 v3，沒被同版覆蓋 |
+| active 損毀時的 tmp 已寫、tmp→active 後兩個邊界 | active 損毀、lkg v2 | 兩次都收斂到 v4，lkg 始終是 v2：損毀的 active 從未被輪替成 lkg |
+
+每個邊界都只會採用一個完整、驗證過的版本，沒有混合設定。tmp 在 rename 前已 fsync；目錄本身沒有 fsync，斷電時 rename 可能回捲，但回捲後的狀態仍是上表其中一列，已驗證可收斂。
+
+## 設計選擇判斷
+
+1. **不搬 candidate，改把驗證過的 bytes 寫成 `active.json.tmp`（fsync），再 active→lkg、tmp→active，candidate 內容未變才刪**：正確。這從根本上消除了「磁碟上的 active 不是被驗證的那份」：成功路徑下，執行中的 `accepted` 就是 `active.json` 的內容。每個 crash 邊界都已驗證可收斂（見上表）。stale tmp 永遠不會被直接採用，只會在下次安裝時被截斷重寫。
+2. **candidate 與 active 逐位元組相同時，視為已生效，刪除且不計失敗**：合理，**沒有削弱 P02-03**。這種 candidate 不會改變任何生效內容；P02-03 要防的「非遞增版本」是回捲或替換，這裡兩者都不發生。反過來，如果照一般啟用走 active→lkg，會把 lkg 蓋成同版，真正的上一版就丟了。所以 no-op 比「拒絕並計失敗」更安全，也讓 CD 重送同一版保持冪等。改寫後的測試（同版本、不同內容）仍測到 `version <= baseline` 的拒絕分支。可選補強：加一個「版本比 active 低」的回捲案例（程式碼同一分支，不是缺陷）。
+3. **讀取、驗證、安裝途中任何 IOException 都算「candidate 被拒」，用磁碟上仍生效的那份啟動；以 package-private hook 取代時序迴圈**：正確。`rejected()` 選的 source 是對的：若 active→lkg 已成功、tmp→active 才失敗，這時 active 已不存在，回報 `Source.LKG`，內容就是 baseline，與磁碟上的 lkg 一致。代價是暫時性錯誤要等下次重啟才會重試，符合 D45「只在重啟啟用」。另一個伴隨的語意：active 暫時讀不到時，candidate 會以 lkg 為基準驗證並直接覆蓋 active，這讓 lkg 保持較舊的版本，但這正是「讀不到＝缺」的要求，與損毀 active 的既有路徑一致，不算缺陷。hook 是 no-op 預設、只給測試用的最小介面，能決定性地重現時序；我的獨立時序迴圈（0/3000）也得到相同結論。
+4. **`discard()` catch `NfsException | IOException | RuntimeException`，記下終態 Failure 後重拋原型別**：正確，重拋型別也保留得對（`NfsException` 包成 `NfsUnavailableException`，其餘原樣）。原本的 `discard_retries_delete_after_nfs_failure` 斷言的 `startsWith("discard delete unresolved at discard-writing")` 仍然成立。剩下的只有 `Error` 還會讓 handle 停在 WRITING（見新問題 2）。
+
+## 新問題
+
+以下都是**非阻擋**的小項，不影響判定：
+
+1. `ConfigStore.java:78-81` 逐位元組相同的分支直接 `Files.deleteIfExists(candidate)`，刪之前沒有像 `removeCandidateIfUnchanged` 那樣再比對一次。在「讀 candidate」與「刪除」之間，若 CD 換上新 candidate，那份新 candidate 會被刪掉：一次發布遺失，也不留失敗信號。後果只是遺失，不會讓未驗證的版本生效，而且只在 crash 復原或 CD 重送同版時才會走到這條分支，窗口很小。與 `:130` 的 ponytail 註解是同一類殘留，但這條分支沒有註明。建議改呼叫 `removeCandidateIfUnchanged(candidate, bytes)`，只要一行。
+2. `WriteHandle.discard()` 沒有 catch `Error`（例如 driver 或 JVM 丟出的 `Error`）。這時 handle 仍停在 WRITING，之後 `finalizeWrite()` 可能發布。極端情況，可改用 `try { …; done = true; } finally { if (!done) poison(); }` 一次涵蓋所有 Throwable。
+3. 文件殘留：`WriteHandle.java:108-112` 的 javadoc 仍寫「池滿／timeout 時 handle 中毒」；`docs/design/file-inventory.md:27-28` 仍寫「驗證後 rename 為 active」「由 candidate rename」，也沒有列出 `active.json.tmp`。P02 偏差 3 ⑩ 雖已聲明取代這些句子，但 inventory 表本身還是舊的。
+
+CLEAN
+
+
+> 處理：新問題 1（already-active 分支直接刪 candidate）改走 `removeCandidateIfUnchanged`；新問題 2（`discard()` 未涵蓋 `Error`）已補；新問題 3 的 `discard()` javadoc 已更新，`docs/design/file-inventory.md` 的舊敘述留待設計文件裁定（已記於 `P02 偏差 3` ⑩）。
