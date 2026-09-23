@@ -51,3 +51,31 @@
 - **(a) discard 提前標記 DISCARDED** — ✅ fixed。`WriteHandle.java:130` 把 `DISCARDED` 移到刪除成功之後，失敗轉 `FAILED`，`finalizeWrite()` 在該狀態只回 Failure、絕不發布，`discard()` 可重呼；in-flight 的刪除 task 即使稍後才完成也踩不到 commit point。新測試在 pre-fix 上會於 `WriteHandleLifecycleTest.java:51` 失敗（pre-fix 第二次 `discard()` 是 no-op，`.writing` 仍在）。扣分只在失敗字串誤報（建議 2）與測試驗錯機制（建議 4）。
 - **(b) Failure 停在 FINALIZING** — ⚠️ partially。所有 Failure 路徑改走 `fail()`，狀態進 `FAILED`、結果存下重播、`discard()` 不再丟 `IllegalStateException`（pre-fix 會在 `WriteHandleLifecycleTest.java:73` 的 `isSameAs` 與 `:75` 的 `b.discard()` 兩處失敗，符合宣稱）；但 `discard()` 之後 `lifecycle` 被改寫成 `DISCARDED`，下一次 `finalizeWrite()` 又回一個不同的 `Failure(IO, "handle discarded")`，README 規則 2 的「原樣回第一次的 Failure」仍可被合法操作打破（建議 1）。
 - **(c) linksInFlight 只在同 identity 重呼時才剪枝** — ✅ fixed（有前提）。`linkSent()` 的全掃描會回收所有已結束的 future，放棄的 Pending handle 不再永久佔位；`inFlightIdentities()` 只是測試用 package-private 讀取器，不影響正式路徑。第三個測試在 pre-fix 上是「編不過」（新增的 accessor），真正的行為斷言是 `WriteHandleLifecycleTest.java:93` 的 1 vs 2，沒有掃描時會是 2。前提是後續還會發生 link-key timeout，否則靜默期最後一批仍留著（建議 5）。
+
+
+---
+
+## Scoped re-review（sonnet，對 fix commit `e98d951`）
+
+# PR #6 fix commit — 再審（scoped re-review，僅核對 follow-up 1/2/4/5/6）
+
+1. ✅ `finalizeWrite()`（WriteHandle.java:154）最前面加 `if (failure != null) return failure;`，位置在 `lifecycle == FAILED`（:155）與 `lifecycle == DISCARDED`（:156-158）兩個分支之前。測試 `failure_is_terminal_and_discardable` 在 `b.discard()`（:73）之後補上 `assertThat(b.finalizeWrite()).isSameAs(first)`（:75），成功驗到 discard 之後 stored Failure 物件不變、不被 replay 成新的。
+
+2. ✅ discard 的 catch（WriteHandle.java:126-133）只在 `failure == null` 時才寫入：`failedOp != null`（先前已被 stream 中毒）沿用 `"stream failed at " + failedOp`（與 `poisoned()` 同一字串，不誤報成 discard 原因）；否則才寫 discard 專屬的 `"discard delete unresolved at " + e.op()`。已存在的 Failure（不論來自 `fail()` 或先前的 discard 失敗）都不會被覆蓋，因為外層有 `if (failure == null)` 守衛。對「stream-poisoned handle（lifecycle FAILED, failure 仍是 null）」而言，第一次 `finalizeWrite()` 行為沒變：`failure != null` 檢查不會命中，照舊落到 `lifecycle == FAILED` 分支呼叫 `poisoned()`，與修正前的 `failure != null ? failure : poisoned()` 邏輯等價，只是拆成兩行。
+
+4. ✅ `discard_retries_delete_after_nfs_failure`（WriteHandleLifecycleTest.java:41-56）在第一次失敗 discard 後呼叫 `finalizeWrite()`，明確斷言 `h.writingPath()).exists()`（:50），證明 `finalizeWrite()` 沒有代為清暫存；接著才呼叫第二次 `discard()` 並斷言檔案消失（:52-53）。`FaultInjectingNfs.dropBefore` 是一次性注入（`before.remove(op)` 用過即刪，見 FaultInjectingNfs.java:40-42、77），第二次 `discard-writing` 呼叫會真的落到底層執行刪除，不會再被注入失敗。因果鏈完整，測試確實驗到「第二次 discard() 才是真正刪檔的人」。
+
+5. ⚠️ `sweepFinishedLinks()`（LocalStore.java:59-61）沿用與原本 `linkSent()` 相同的 `linkInFlight()` / `computeIfPresent` 機制逐 key 操作，並發與成本跟修正前一致；`beginWrite()`（:90）在建立新 handle 前呼叫它，程式碼本身沒問題。但新增的測試片段（WriteHandleLifecycleTest.java:102-103，`store.beginWrite("L3").discard()` 後斷言 `inFlightIdentities()` 為 0）**沒有實際證明「不需要進一步 timeout 也能回收」**：追蹤整個測試時序會發現，在跑到這兩行之前，L2 的 map entry 已經在 `other.finalizeWrite()` 第二次呼叫（:101）內，經由 `finalizeWrite()` 本來就有、對自身 identity 的 `store.linkInFlight(id)` 自檢（PR #6 之前就存在的機制，非本次新增）清空了；同理 L1 的 entry 在此之前也已經被 `linkSent()` 原本就有的全掃描（呼叫 `other.finalizeWrite()` 第一次觸發 link-key timeout 時）清掉。也就是說，即使把 `beginWrite()` 裡新加的 `sweepFinishedLinks()` 呼叫拿掉，這段測試依然會通過（到 :103 之前 map 早就是空的），測試沒有區分「有無此修正」。修法本身可信，但測試證據不足以支撐 item 5 的 claim。
+
+6. ✅ README 規則 5（README.md:29）補充「`finalizeWrite()` 不會代為清暫存，只回 `Failure(IO, "discard delete unresolved at …")`」與「已回 `Failure` 的 handle 在 `discard()` 之後重呼 `finalizeWrite()` 仍回原本那個 `Failure`」，兩句都與程式碼行為一致（分別對應 WriteHandle.java:154 的提前回傳、discard() 的 catch 不代清暫存）。規則 7（README.md:31）措辭從「lifecycle 狀態有同步」改成「狀態轉換的判定有同步」，符合現況：`discard()` 的 `lifecycle = Lifecycle.DISCARDED`（WriteHandle.java:136）、`success()`（:329）等寫入確實都在 `synchronized(stream)` 區外，只有轉換的判定（check）在區內。
+
+## 新問題
+
+（無：沒有發現會讓 handle 誤發布，或影響正常 Success 路徑的新迴歸。討論過的唯一疑點是 item 5 的測試沒有實際區分修正前後，已計入該項的 ⚠️，不算獨立新缺陷。）
+
+## 結論
+
+NOT CLEAN — 5 個 follow-up 中有 4 個（1/2/4/6）確認修好且測試到位；item 5 的程式碼修正本身正確、未發現新缺陷，但新增的測試斷言在此情境下即使拿掉 `beginWrite()` 的 sweep 呼叫也會通過，並未真正證明「不需進一步 timeout 也能回收」，建議補一個不依賴 L2 自身 retry 的獨立測試（例如：讓最後一個 identity 的 future 完成後，不再對它呼叫 `finalizeWrite()`，直接靠下一次 `beginWrite()` 觀察 map 縮小）。
+
+
+> 處理：唯一 finding（beginWrite 回收斷言為空）已在下一 commit 改成獨立測試 `completed_link_futures_are_reclaimed_on_begin_write`，並以移除回收呼叫的 mutation 確認會失敗。

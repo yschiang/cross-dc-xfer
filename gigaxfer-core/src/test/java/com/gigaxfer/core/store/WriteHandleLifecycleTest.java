@@ -76,31 +76,45 @@ class WriteHandleLifecycleTest {
         assertThat(root.resolve("P3/mes/metrology/2026-09-22/08/F1")).hasContent("one");
     }
 
-    /** 放棄的 Pending handle 其 link future 結束後，下一次登記或 beginWrite 會把它回收，不永久留在記憶體。 */
+    /** 放棄的 Pending handle 其 link future 結束後，下一次 linkSent 會把它回收（兩個 handle 都在任何 timeout 前建立，排除 beginWrite 的回收）。 */
     @Test
     void completed_link_futures_are_reclaimed_on_next_link_sent() throws Exception {
-        CountDownLatch release = new CountDownLatch(1);
         WriteHandle h = store.beginWrite("mes", "metrology", "L1");
+        WriteHandle other = store.beginWrite("mes", "metrology", "L2");
         h.stream().write("l".getBytes(StandardCharsets.UTF_8));
+        other.stream().write("m".getBytes(StandardCharsets.UTF_8));
+
+        CountDownLatch release = new CountDownLatch(1);
         nfs.hang("link-key", release);
         assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
-        assertThat(store.inFlightIdentities()).isEqualTo(1);
-
         release.countDown();
         nfs.hung.get(0).get(); // 放棄 h：沒有人再對 L1 呼叫 finalizeWrite
+        assertThat(store.inFlightIdentities()).isEqualTo(1); // 已結束但沒人回收
 
-        WriteHandle other = store.beginWrite("mes", "metrology", "L2");
-        other.stream().write("m".getBytes(StandardCharsets.UTF_8));
         CountDownLatch release2 = new CountDownLatch(1);
         nfs.hang("link-key", release2);
         assertThat(other.finalizeWrite()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
-        assertThat(store.inFlightIdentities()).isEqualTo(1); // 只剩 L2
+        assertThat(store.inFlightIdentities()).isEqualTo(1); // linkSent 回收了 L1，只剩 L2
 
         release2.countDown();
         nfs.hung.get(1).get();
         assertThat(other.finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
-        store.beginWrite("mes", "metrology", "L3").discard(); // 沒有新 timeout 也會回收最後一批
-        assertThat(store.inFlightIdentities()).isZero();
         assertThat(Files.exists(root.resolve("P3/mes/metrology/2026-09-22/08/L1"))).isTrue();
+    }
+
+    /** 沒有再發生 timeout 時，最後一批已結束的 future 由下一次 beginWrite 回收。 */
+    @Test
+    void completed_link_futures_are_reclaimed_on_begin_write() throws Exception {
+        WriteHandle h = store.beginWrite("mes", "metrology", "L1");
+        h.stream().write("l".getBytes(StandardCharsets.UTF_8));
+        CountDownLatch release = new CountDownLatch(1);
+        nfs.hang("link-key", release);
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
+        release.countDown();
+        nfs.hung.get(0).get();
+        assertThat(store.inFlightIdentities()).isEqualTo(1); // 已結束但沒人回收
+
+        store.beginWrite("mes", "metrology", "L2").discard();
+        assertThat(store.inFlightIdentities()).isZero();
     }
 }
