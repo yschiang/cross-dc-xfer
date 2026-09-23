@@ -23,6 +23,10 @@ review 全文 `docs/reports/pr5-review.md`。必修三項已修：① 片段 UTF
 
 Senior review（Codex，對 `3b758b3`）判 P02-03、P02-05、P02-08、P02-11 未通過，四項阻擋皆已修：① `ConfigCodec` 對 JSON `null`（整份或清單元素）丟 `InvalidConfigException` 而非 NPE，讓 `ConfigStore` 回退；② 嚴格解析：浮點不截成整數、字串不轉數字、數字不轉字串、JSON 後不得接任何 token；③ V1 改為逐句冪等的 Java migration（SQL 移到 `db/schema/V1.sql`），`DbBootstrap` 發現失敗紀錄時先 `repair` 再 migrate，首次 migration 在 DDL 中途斷線後自動接續、不刪既存物件；④ `/file`、`/report` 補 Target 角色契約測試（測試 controller，正式端點仍留 P04）。③ 的 repair 與逐句跳過、① 的 null 處理皆以 mutation 反證。非阻擋項（README 認證範例、SchemaTest 冪等覆蓋）開 follow-up issue。
 
+## Senior review 第 2 輪後修正（2026-09-24，使用者裁定追加第 3 輪）
+
+第 2 輪 `VERDICT: CLEAN`，但驗收對照 P02-12 未通過、P02-07 未驗；依更新後的審查標準（AC 未通過即阻擋），合併前補齊：README 認證範例改為分清正式服務現在能驗的（401／401／通過認證但無 handler 回 404／`/policy` 200，`ProductionAuthResponsesTest` 在正式產物 context 驗證）與測試契約（target 規則，`NodeAuthFilterTest`）；`SchemaTest` 冪等測試補齊 ticket 列的全部保留狀態，另加九個索引的斷言。
+
 ## 環境
 
 - 硬體/OS：arm64 macOS，Darwin 27.0.0
@@ -47,8 +51,8 @@ mvn test
 | 模組 | 測試數 | Failures | Errors |
 | --- | --- | --- | --- |
 | gigaxfer-core | 123 | 0 | 0 |
-| gigaxfer-sync-service | 68 | 0 | 0 |
-| 合計 | 191 | 0 | 0 |
+| gigaxfer-sync-service | 70 | 0 | 0 |
+| 合計 | 193 | 0 | 0 |
 
 （測試類別清單：核對用 `grep -rn "void " gigaxfer-*/src/test` 取實際方法名，下表逐 AC 列出對應項。）
 
@@ -62,12 +66,12 @@ mvn test
 | P02-04 安全啟用 | Task 2、3、3R | `ConfigStoreTest.activates_valid_candidate_and_rotates_active_to_lkg`、`ConfigStoreTest.accepts_candidate_that_only_changes_operational_and_node_order`、`PolicyEndpointTest.config_is_immutable_while_process_runs` | 通過 | 驗證通過才 rename；運行期改 `active.json` 檔案內容不影響記憶體中設定 |
 | P02-05 失敗與回退 | Task 2、2R、3 | `ConfigStoreTest.rejects_malformed_candidate_and_keeps_active`、`falls_back_to_lkg_when_active_missing`、`falls_back_to_lkg_when_active_is_corrupt`、`corrupt_active_does_not_overwrite_good_lkg_when_candidate_activates`、`corrupt_active_without_lkg_refuses_even_with_good_candidate`、`candidate_alone_does_not_bypass_manual_initial_active_setup`、`candidate_is_validated_against_lkg_when_active_missing`、`unreadable_active_falls_back_to_lkg`、`unreadable_candidate_is_rejected_and_active_kept`、`activation_io_failure_keeps_running_config_and_candidate`、`candidate_replaced_after_validation_is_not_activated`、`PolicyEndpointTest.config_metrics_are_registered_with_node_tag`（`activation_failure_count` 基準值 0）、`ConfigCodecTest.rejects_json_null_root_and_null_elements_as_invalid`、`ConfigStoreTest.null_active_falls_back_to_lkg`（senior review 第 1 輪） | 通過（有缺口） | 拒絕留 candidate 原地；壞 active 不覆蓋好的 lkg 且 `activationFailure` 保留損毀信號（PR #5 review 必修 3）；candidate-only 初始化拒絕。缺口：`activation_failure_count = 1` 的 gauge 接線沒有測試（review 建議 3，follow-up） |
 | P02-06 中斷恢復 | Task 2 | `ConfigStoreTest.crash_between_renames_recovers_on_next_start`、`ConfigStoreTest.ignores_candidate_tmp_still_being_written_by_cd` | 通過 | 設定啟用不觸碰 DB；義務與控制狀態由 schema 持有（Task 4） |
-| P02-07 schema 與冪等 bootstrap | Task 4 | `SchemaTest.migration_runs_in_background_and_creates_all_tables`、`SchemaTest.node_meta_has_one_incarnation_and_seq_counters_start_at_zero`、`SchemaTest.bootstrap_is_idempotent_across_restarts`、`SchemaTest.obligation_state_check_constraint_rejects_unknown_state`、`SchemaTest.remote_received_keeps_source_selected_path_without_local_source_row` | 通過 | 含 `received.content_path`、非零計數器保留；欄位改名見 design-decisions「P02 偏差」⑥ |
+| P02-07 schema 與冪等 bootstrap | Task 4 | `SchemaTest.migration_runs_in_background_and_creates_all_tables`、`SchemaTest.node_meta_has_one_incarnation_and_seq_counters_start_at_zero`、`SchemaTest.bootstrap_is_idempotent_across_restarts`（再次 bootstrap 保留 incarnation、completed／change 非零計數器、rebuild 旗標、`received.recovery_pending`／`report_pending`、`rebuild_progress` 恢復進度、`target_control` 控制狀態、義務與歷史資料，且不重複建列）、`SchemaTest.all_v1_indexes_exist`（九個索引）、`SchemaTest.obligation_state_check_constraint_rejects_unknown_state`、`SchemaTest.remote_received_keeps_source_selected_path_without_local_source_row` | 通過 | 含 `received.content_path`、非零計數器保留；欄位改名見 design-decisions「P02 偏差」⑥ |
 | P02-08 DB 故障恢復 | Task 4、5 | `DbOutageRecoveryTest.db_becomes_ready_without_restart_after_outage`、`MigrationResumeTest.ddl_failure_mid_v1_resumes_on_next_attempt_and_keeps_existing_rows`、`MigrationResumeTest.v1_rerun_without_history_record_skips_existing_objects`（首次 V1 在 DDL 中途斷線後自動接續，senior review 第 1 輪） | 通過 | DB 不可用時 process 不退出、`/policy` 仍回應；DB 恢復後不重啟即轉 ready（`gigaxfer.db-retry-millis` 測試縮短為 200ms） |
 | P02-09 health 語意 | Task 5 | `HealthEndpointTest.readiness_is_up_when_db_migrated_and_nfs_root_reachable`、`HealthEndpointTest.nfs_component_is_down_when_root_disappears_and_recovers`、`HealthEndpointTest.liveness_does_not_depend_on_db_or_nfs`、`NfsTimeoutHealthTest.nfs_component_is_down_when_probe_times_out`、`HealthGaugeTest.gauges_reflect_state_without_prior_health_request`（不經 health 請求，`db_health`/`storage_health` 於 scrape 時即時探測） | 通過 | 含 NFS timeout；liveness 只看 process 存活，不受 DB/NFS 影響 |
 | P02-10 Node 認證 | Task 6 | `NodeAuthFilterUnitTest`（`protected_paths_require_auth_even_when_obfuscated` 對 `/pending;x=1`、`/%70ending` 等參數化、`exempt_paths_need_no_token`）、`Sha256Test.hex_of_p1_secret_matches_fixture`；`NodeAuthFilterTest`（10 個測試：`own_token_is_read_from_secret_file_and_trimmed`、`missing_authorization_is_401`、`unknown_token_is_401`、`non_bearer_scheme_is_401`、`known_token_resolves_caller_node`、`target_param_equal_to_caller_is_allowed`、`target_param_different_from_caller_is_403`、`node_internal_endpoints_need_no_token`、`protected_prefixes_cover_file_subpaths`、`received_does_not_apply_target_equals_caller_rule`） | 通過 | 401 = 無/未知 token；403 = target 與 caller 不同（D14 修 2） |
 | P02-11 角色身分（有缺口） | Task 6 | `NodeAuthFilterTest.known_token_resolves_caller_node`、`NodeAuthFilterTest.target_param_different_from_caller_is_403`、`NodeAuthFilterTest.received_does_not_apply_target_equals_caller_rule`、`NodeAuthFilterTest.target_endpoints_take_target_from_caller_identity`（`/pending`、`/file/**`、`/report` 三個 Target 端點：不帶或相同 target → 200、不同 → 403；senior review 第 1 輪） | 通過 | `/received` 不套用 target==caller 規則；「只列 caller 為 Source 的列」的實作留給 P04 |
-| P02-12 可交接可重現 | Task 7 | `gigaxfer-sync-service/README.md`、本檔（`docs/validation/P02-validation.md`）、`mvn test` 175/175 全綠（Task 7 當時 139） | 通過 | 含首次初始化、設定更新/回退操作、DB 斷線觀察、認證 curl 範例、health/metrics 範例、HTTPS 部署要求 |
+| P02-12 可交接可重現 | Task 7 | `gigaxfer-sync-service/README.md`（認證節分「正式服務現在能驗的」與「測試契約」）、`ProductionAuthResponsesTest.readme_auth_examples_match_production_artifact`（不載入測試 controller：無 token／未知 token 401、已知 token 通過認證但 P02 無 handler 回 404、`/policy` 200）、本檔、`mvn test` 193/193 | 通過 | 含首次初始化、設定更新/回退操作、DB 斷線觀察、認證 curl 範例、health/metrics 範例、HTTPS 部署要求 |
 
 ## 尚未驗證
 
@@ -83,6 +87,6 @@ mvn test
 
 - `ConfigActivation.activationFailure` 為單一 `Optional<String>` 原因欄位：一次 candidate 驗證若同時觸發多條失敗規則，只會保留其中一則訊息，其餘原因不會並列呈現。
 - `DbBootstrap.stop()`（`SmartLifecycle`）只對背景重試執行緒呼叫 `interrupt()`，未 `join()` 等待其真正結束；正常關閉流程下屬良性競態，但測試或工具化關閉時無法保證該執行緒已完全停止。
-- `SchemaTest` 驗證表存在、欄位、CHECK 約束與冪等 bootstrap，但未斷言索引（`ix_obligation_target_state_next` 等）確實建立；索引目前僅來自遷移腳本本身。
+- （已解決）`SchemaTest.all_v1_indexes_exist` 斷言 V1 九個索引皆建立。
 - 設計文件 `docs/design/system-design.md` §14 obligation 表義務欄位列出索引「(target_node, state, next_attempt_at)；(state, source_ready_at) 供 age；(target_node, completed_seq)」，但 `V1__schema.sql` 的 `obligation` 表沒有 `source_ready_at` 欄位（該欄位屬於 `file_identity`），也未建立 `(state, source_ready_at)` 索引；此落差未在本輪核准修正，留待設計決策裁定索引欄位或改用 `file_identity` join。
 - `FinalizeUnderPressureTest`（P01 既有，非本輪異動）以背景執行緒占用唯一 NFS 執行器槽位、100ms timeout 斷言 `UNAVAILABLE`，為時序敏感測試；本輪執行未見失敗，但排程延遲仍可能造成偶發不穩定，未額外加固。

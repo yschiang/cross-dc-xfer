@@ -93,18 +93,25 @@ curl -s localhost:8080/actuator/prometheus | grep -E '^db_health'
 
 401 = 無 / 未知 token；403 = `target` 參數與呼叫者身分不同（D14 修 2）。`/received` 不套用 target==caller 規則（只列出 caller 為 Source 的資料列由 P04 實作）。Node 內端點只有豁免清單 `/policy`、`/locate/**`、`/actuator/**`、`/error` 不認證（同主機群、Node 內視為信任邊界內）；其餘路徑一律需要 token。路徑比對用解碼後、去掉 `;` 參數的 application path，`/%70ending`、`/pending;x=1` 等寫法不能繞過。401 帶 `WWW-Authenticate: Bearer`；scheme 名稱大小寫不敏感；403 訊息為常數，不回傳節點名。TLS 由 `server.ssl.*` 部署設定提供（D14），本模組測試走明文；生產環境必須在部署設定啟用 HTTPS，本模組不強制、不驗證。
 
-認證檢查範例：
+認證檢查分兩部分。P02 的正式產物只有認證 filter，還沒有 Node 間端點的 handler（`/pending`、`/file/**`、`/report`、`/received` 由 P04 起實作），所以：
+
+**正式服務現在能驗的**（實際 jar 上執行）：
 
 ```bash
-# 無 token → 401
+# 無 token → 401，帶 WWW-Authenticate: Bearer
 curl -s -o /dev/null -w '%{http_code}\n' localhost:8080/pending
 
-# 已知 token → 200，回報解析出的呼叫者身分
-curl -s -H "Authorization: Bearer $P2_TOKEN" localhost:8080/pending
+# 未知 token → 401
+curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer not-a-node-token" localhost:8080/pending
 
-# target 參數與呼叫者不同 → 403（僅 target==caller 規則適用的端點，/received 不適用）
-curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $P2_TOKEN" 'localhost:8080/pending?target=P3'
+# 已知 token → 通過認證；P02 尚無 handler，回 404（不是 401）。P04 加上端點後改回 200。
+curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $P2_TOKEN" localhost:8080/pending
+
+# Node 內端點不需 token → 200
+curl -s -o /dev/null -w '%{http_code}\n' localhost:8080/policy
 ```
+
+**測試契約**（`mvn test`，以測試專用 controller 站在端點位置驗證，正式 handler 由 P04 沿用同一個 `CallerIdentity.requireTarget`）：已知 token 解析出呼叫者 Node；`/pending`、`/file/**`、`/report` 的 target 取自身分，不帶或相同 → 以呼叫者為 Target，不同 → 403 且回應不帶 Node 名；`/received` 不套用 target 規則（`NodeAuthFilterTest`，含 `target_endpoints_take_target_from_caller_identity`）。
 
 ## 指標（P02）
 
