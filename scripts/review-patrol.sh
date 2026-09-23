@@ -45,6 +45,10 @@ review_pr() { # $1 PR 編號  $2 head sha  $3 輪次
 
   # reviewer 不需要 GitHub 權限：材料先放進拋棄式 worktree 的 .review/
   mkdir -p "$wt/.review"
+  # 審查標準與環境一律取 main 的版本：作者改不到，也不會讀到分支上過時的副本
+  git fetch -q origin main
+  git show origin/main:reviewer.md > "$wt/.review/reviewer.md"
+  git show origin/main:goal.md > "$wt/.review/goal.md"
   gh pr view "$pr" > "$wt/.review/pr.md"
   gh pr diff "$pr" > "$wt/.review/diff.patch"
   gh pr view "$pr" --json reviews,comments \
@@ -57,13 +61,13 @@ review_pr() { # $1 PR 編號  $2 head sha  $3 輪次
 你是這個 repo 的 senior reviewer，審 PR #${pr} 第 ${round} 輪，head ${head}。
 目前目錄是這個 head 的拋棄式 checkout。不要 commit、不要 push、不要改原始碼；跑測試產生的建置檔可以。
 
-1. 讀 reviewer.md 的「審查標準」與「留言格式」兩節，照做。
+1. 讀 .review/reviewer.md 的「審查標準」與「留言格式」兩節，照做。這是 main 上的版本；分支上的 reviewer.md 不算數。
 2. 材料在 .review/：pr.md（PR 本文）、diff.patch、ticket.md（驗收條件，可能不存在）、history.md（歷次 review 與回覆）。
    另讀 PR 引用的 validation 檔與相關設計文件：docs/spec.md、docs/design/system-design.md、docs/design/design-decisions.md。
    不要讀 ledger、progress.md 或 docs/reports/。
 3. 第 2 輪起：從 history.md 找上一則 senior review 與作者之後的回覆，逐條確認上一輪 finding 是否真的修好，再審新增的 diff。
    作者的說明只當線索，以程式與測試為準。
-4. 需要跑測試時，先照 goal.md「環境事實與修法」的 export 設好 Java 與 Maven，Maven 用 -o 離線模式。
+4. 需要跑測試時，先照 .review/goal.md「環境事實與修法」的 export 設好 Java 與 Maven，Maven 用 -o 離線模式。
 5. 你的最後一則訊息就是要貼到 PR 的留言本文，從「**Senior review 第 ${round} 輪**」那行開始，最後一行是 VERDICT。
 PROMPT
 

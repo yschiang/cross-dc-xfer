@@ -40,6 +40,7 @@ Looper 在跑時不要同時開 `--loop`：兩邊可能同時審同一個 head�
 3. 審一輪：
    - 在暫存目錄建立 PR head 的拋棄式 worktree，不碰任何分支。
    - 把 PR 本文、diff、ticket、歷次 review 與回覆放進 worktree 的 `.review/`。Codex 不需要 GitHub 權限。
+   - 本檔與 goal.md 一律取 origin/main 的版本放進 `.review/`。作者在分支上改本檔不影響審查標準。
    - 用 `codex exec --sandbox workspace-write` 跑 reviewer，只能寫這個拋棄式目錄，所以能跑測試但改不到分支。
    - 腳本在最前面加標記行，後面原樣接上 Codex 的最後一則訊息，用 `gh pr review --comment` 貼上。最後一行不是 VERDICT 時，腳本附註並視為 CHANGES。
    - 刪掉拋棄式 worktree。
