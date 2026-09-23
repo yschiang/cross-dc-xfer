@@ -63,7 +63,7 @@ flowchart TD
 | **④ 安排交付** | 切成哪些 Milestones／Features，誰依賴誰？ | [P00-roadmap.md](docs/superpowers/plans/P00-roadmap.md) |
 | **⑤ 開 Feature ticket** | Member 接手的範圍、依據與驗收條件是什麼？ | [P02 ticket #1](https://github.com/yschiang/cross-dc-xfer/issues/1) |
 | **⑥ 寫實作 plan** | 實作與測試要分成哪些步驟？ | [P02-sync-service-skeleton.md](docs/superpowers/plans/P02-sync-service-skeleton.md) |
-| **⑦ 交給 agent 執行** | 今晚做哪些工作、如何續行、何時停止？ | [goal.md](goal.md) |
+| **⑦ 交給 agent 執行** | 今晚做哪些工作、如何續行、何時停止？誰來 review？ | [goal.md](goal.md)、[reviewer.md](reviewer.md) |
 | **⑧ Review 與驗收** | 做到哪個 commit、哪些測試通過、還需人決定什麼？ | [P01 PR #3](https://github.com/yschiang/cross-dc-xfer/pull/3) 與 [驗收證據](docs/validation/P01-validation.md)；夜間交接見 [overnight-report.md](docs/reports/overnight-report.md) |
 
 ⑤、⑥ 是同一個 P02 Feature 的實際 ticket 與接續 plan；ticket 已發布，plan 修訂稿尚待與執行分支整合。閱讀設計時，可搭配 [CONTEXT.md](CONTEXT.md) 查詞彙、[ADRs](docs/adr/) 查架構理由。
@@ -128,7 +128,7 @@ Feature ticket 長這樣（P01 [#2](https://github.com/yschiang/cross-dc-xfer/is
 | ① 開 ticket | 寫 AC 清單（如 #1）；還沒 ticket 的 plan（目前 P03）在迴圈開始前先開 | ticket |
 | ② 實作 | SDD 逐 task 實作、whole-branch review、fix loop | 分支、ledger、validation 檔 |
 | ③ 開 PR | push 分支；body 連 ticket、列 AC 對照與 validation 檔；CI 是免費的第二層檢查 | PR |
-| ④ 獨立 review | 獨立 reviewer 看 PR diff，用 `gh pr review --comment` 貼上；有 finding 就修、再 review 一輪；更新 PR body 與 ticket 留言 | review 紀錄 |
+| ④ 獨立 review | 常駐 senior reviewer 是另一個 session，看到新 commit 就派全新 context 的 reviewer 審 PR diff，直接留言；作者每輪先處理 CHANGES，最多兩輪。見 [reviewer.md](reviewer.md) | review 留言 |
 | ⑤ merge | 人 approve／merge 或退回 | main |
 
 ```text
