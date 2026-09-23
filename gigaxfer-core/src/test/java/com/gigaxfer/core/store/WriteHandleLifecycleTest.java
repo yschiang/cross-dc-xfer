@@ -55,6 +55,24 @@ class WriteHandleLifecycleTest {
         assertThat(h.finalizeWrite()).isSameAs(r);
     }
 
+    /** 刪除遇到一般 IOException（EACCES、EIO…）也不算已放棄：handle 中毒，finalizeWrite 不得發布。 */
+    @Test
+    void discard_hard_io_failure_poisons_handle_and_never_publishes() throws Exception {
+        WriteHandle h = store.beginWrite("mes", "metrology", "D2");
+        h.stream().write("x".getBytes(StandardCharsets.UTF_8));
+        nfs.failBefore("discard-writing");
+
+        assertThatThrownBy(h::discard).isInstanceOf(java.io.IOException.class)
+            .isNotInstanceOf(NfsUnavailableException.class);
+        FinalizeResult r = h.finalizeWrite();
+        assertThat(r).isInstanceOf(FinalizeResult.Failure.class);
+        assertThat(((FinalizeResult.Failure) r).detail()).startsWith("discard delete unresolved at discard-writing");
+        assertThat(root.resolve("P3/mes/metrology/2026-09-22/08/D2")).doesNotExist();
+
+        h.discard();
+        assertThat(h.writingPath()).doesNotExist();
+    }
+
     /** README 規則 5：Finalize 回 Failure 的 handle 可 discard；重呼 finalizeWrite 回同一個 Failure。 */
     @Test
     void failure_is_terminal_and_discardable() throws Exception {

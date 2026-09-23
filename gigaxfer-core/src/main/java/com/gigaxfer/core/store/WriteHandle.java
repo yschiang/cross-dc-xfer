@@ -122,16 +122,20 @@ public final class WriteHandle implements AutoCloseable {
                 channel.close();
                 Files.deleteIfExists(writing);
             });
-        } catch (NfsException e) {
+        } catch (NfsException | IOException | RuntimeException e) {
+            // 任何「刪除沒有確定完成」（池滿、timeout、EACCES、EIO、ESTALE…）都讓 handle 中毒：
+            // 停在 WRITING 的話，之後的 finalizeWrite 會發布 Application 已放棄的內容。
             synchronized (stream) {
                 if (failure == null) {
                     failure = new FinalizeResult.Failure(FailureReason.IO, failedOp != null
                         ? "stream failed at " + failedOp
-                        : "discard delete unresolved at " + e.op());
+                        : "discard delete unresolved at discard-writing: " + e);
                 }
                 lifecycle = Lifecycle.FAILED;
             }
-            throw new NfsUnavailableException(e.op(), e);
+            if (e instanceof NfsException ne) throw new NfsUnavailableException(ne.op(), ne);
+            if (e instanceof IOException io) throw io;
+            throw (RuntimeException) e;
         }
         lifecycle = Lifecycle.DISCARDED;
     }
