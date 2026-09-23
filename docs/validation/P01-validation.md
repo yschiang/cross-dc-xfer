@@ -2,7 +2,7 @@
 
 **Ticket：** [P01 #2](https://github.com/yschiang/cross-dc-xfer/issues/2)
 
-**狀態：** 本機自動化測試通過，提交人工 PR review；未合併，不代表完整 M1 或真實 NAS 已驗收。
+**狀態：** PR #3 已合併到 main（`4cddff5`，head `ad57714`，GitHub JDK 21 CI 成功）；不代表完整 M1 或真實 NAS 已驗收。合併後稽核的 lifecycle 修正見 `WriteHandleLifecycleTest`（本分支）。
 
 ## 版本與執行環境
 
@@ -13,7 +13,7 @@
 | 被測版本 | 本文件所在 commit（提交前與提交後均以相同 worktree 內容重跑） |
 | 本次執行 | 2026-09-23，macOS arm64，本機暫存檔案系統；JDK 27、Maven 3.9.16，`maven.compiler.release=21` |
 | 結果 | **99 tests，0 failures、0 errors、0 skipped**（`7913a88` 起，含 `FinalizeRetryTest.discard_after_finalize_started_is_rejected_and_keeps_temp`）；Surefire XML 彙總 |
-| CI | GitHub Actions `CI`（`.github/workflows/ci.yml`）以 Temurin **JDK 21** 執行 `mvn -B -ntp verify`；本地修正尚未 push，沒有對應 remote check |
+| CI | GitHub Actions `CI`（`.github/workflows/ci.yml`）以 Temurin **JDK 21** 執行 `mvn -B -ntp verify`；PR #3 head `ad57714` 的 remote check 成功 |
 
 舊 P01 分支與現行 main 無共同祖先，因此另建提交分支，未改寫原 P01／P02 分支。本紀錄不是 GitHub Reviewer 已批准。
 
@@ -76,7 +76,7 @@ mvn -q -pl gigaxfer-core test
 
 ## 尚未驗收與下游工作
 
-- **執行環境：** Java 21 runtime 尚未重跑；本次是 JDK 27 編譯至 release 21。CI workflow 已存在，但本地修正尚未 push，沒有對應 remote run。
+- **執行環境：** 本機為 JDK 27 編譯至 release 21；Java 21 runtime 由 GitHub CI（Temurin 21）對 `ad57714` 跑過並成功。
 - **P13：** 真實 OS／NFSv3 client／NAS 的 fsync 穩定儲存、hard link、failover、長時間掛起與操作所有權語意。
 - **P10：** Policy／容量 WriteGate、Consumer API、指標與 library 打包；完整 F18 整合不在這 99 個測試內（core 半邊：`BoundedNfsExecutorTest`、`FinalizeUnderPressureTest`）。
 - **整個 M1** 尚未驗收；本票只涵蓋 core library。

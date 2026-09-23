@@ -52,6 +52,7 @@ public final class WriteHandle implements AutoCloseable {
     private String digest; // 第①步 fsync 後固定，之後不再改（IR-01）
     private volatile Lifecycle lifecycle = Lifecycle.WRITING;
     private volatile String failedOp;
+    private volatile FinalizeResult.Failure failure; // Finalize 的終態結果；之後每次 finalizeWrite 原樣回
 
     WriteHandle(LocalStore store, FileIdentity id, String dataClass, UUID uuid, Path writing, FileChannel channel) {
         this.store = store;
@@ -84,7 +85,7 @@ public final class WriteHandle implements AutoCloseable {
             case FINALIZING -> throw new IOException("handle is finalizing; content is fixed");
             case FINALIZED -> throw new IOException("handle finalized; content is fixed at " + digest);
             case DISCARDED -> throw new IOException("handle discarded");
-            case FAILED -> throw new IOException("handle failed at " + failedOp);
+            case FAILED -> throw new IOException("handle failed: " + (failure != null ? failure.detail() : "stream failed at " + failedOp));
         }
     }
 
@@ -104,14 +105,17 @@ public final class WriteHandle implements AutoCloseable {
         return stream;
     }
 
-    /** 只允許 Finalize 前（CONTEXT.md Discard）。write 失敗（poisoned）後仍允許。 */
+    /**
+     * 只允許 Finalize 前（CONTEXT.md Discard）。write 失敗（poisoned）或 Finalize 已回 Failure 的 handle 仍允許。
+     * 刪除真正完成才進 DISCARDED；池滿／timeout 時 handle 中毒（finalizeWrite 只回 Failure、不發布），
+     * 可重呼 discard 再刪一次。
+     */
     public void discard() throws IOException {
         synchronized (stream) {
             if (lifecycle == Lifecycle.FINALIZING || lifecycle == Lifecycle.FINALIZED) {
                 throw new IllegalStateException("cannot discard after finalize started");
             }
             if (lifecycle == Lifecycle.DISCARDED) return;
-            lifecycle = Lifecycle.DISCARDED;
         }
         try {
             store.nfs.run("discard-writing", () -> {
@@ -119,8 +123,11 @@ public final class WriteHandle implements AutoCloseable {
                 Files.deleteIfExists(writing);
             });
         } catch (NfsException e) {
+            lifecycle = Lifecycle.FAILED;
+            failedOp = e.op();
             throw new NfsUnavailableException(e.op(), e);
         }
+        lifecycle = Lifecycle.DISCARDED;
     }
 
     /**
@@ -138,7 +145,7 @@ public final class WriteHandle implements AutoCloseable {
      */
     public FinalizeResult finalizeWrite() {
         synchronized (stream) {
-            if (lifecycle == Lifecycle.FAILED) return poisoned();
+            if (lifecycle == Lifecycle.FAILED) return failure != null ? failure : poisoned();
             if (lifecycle == Lifecycle.DISCARDED) {
                 return new FinalizeResult.Failure(FailureReason.IO, "handle discarded");
             }
@@ -208,8 +215,7 @@ public final class WriteHandle implements AutoCloseable {
                 preexisting = true;
                 declared = store.nfs.call("read-manifest", () -> readManifest(manifestPath));
                 if (!declared.sameDeclaration(id, dataClass, size, digest)) {
-                    cleanupTemps();
-                    return new FinalizeResult.Failure(FailureReason.CONFLICT,
+                    return fail(FailureReason.CONFLICT,
                         "identity already declared with different content: " + declared.digest() + " size=" + declared.size());
                 }
             }
@@ -235,8 +241,7 @@ public final class WriteHandle implements AutoCloseable {
             if (preexisting) {
                 Instant mtime = store.nfs.call("stat-manifest", () -> Files.getLastModifiedTime(manifestPath).toInstant());
                 if (Duration.between(mtime, store.clock.instant()).compareTo(LocalStore.DECLARATION_MAX_AGE) > 0) {
-                    cleanupTemps();
-                    return new FinalizeResult.Failure(FailureReason.DECLARATION_EXPIRED, "declared at " + mtime + ", use a new logical key");
+                    return fail(FailureReason.DECLARATION_EXPIRED, "declared at " + mtime + ", use a new logical key");
                 }
             }
 
@@ -254,8 +259,7 @@ public final class WriteHandle implements AutoCloseable {
                 return verifyPublished(contentPath, declared);
             } catch (NoSuchFileException e) {
                 // D51 修 2：link 尚未送出且來源已不存在（例如超 TTL 被清道夫刪）→ FAILURE
-                cleanupTemps();
-                return new FinalizeResult.Failure(FailureReason.IO, "writing file missing before link: " + writing);
+                return fail(FailureReason.IO, "writing file missing before link: " + writing);
             }
 
             // ④
@@ -266,16 +270,27 @@ public final class WriteHandle implements AutoCloseable {
             return new FinalizeResult.PendingConfirmation(e.op(),
                 e instanceof NfsBusyException ? "nfs pool exhausted" : "nfs timeout");
         } catch (IOException e) {
-            cleanupTemps();
-            return new FinalizeResult.Failure(FailureReason.IO, e.toString());
+            return fail(FailureReason.IO, e.toString());
         }
     }
 
     /** 寫入（含 finalize 第①步的 flush）失敗過的 handle：內容不可信，永不發布。 */
     private FinalizeResult poisoned() {
-        lifecycle = Lifecycle.FAILED;
+        return fail(FailureReason.IO, "stream failed at " + failedOp);
+    }
+
+    /**
+     * Failure 是終態：commit point 未踩到（或已被別人踩到），本 handle 永不發布。
+     * 結果保存起來，之後的 finalizeWrite 原樣回，重試不會改變已回報的結論；discard 仍允許（README 規則 5）。
+     */
+    private FinalizeResult.Failure fail(FailureReason reason, String detail) {
+        FinalizeResult.Failure f = new FinalizeResult.Failure(reason, detail);
+        synchronized (stream) {
+            lifecycle = Lifecycle.FAILED;
+            failure = f;
+        }
         cleanupTemps();
-        return new FinalizeResult.Failure(FailureReason.IO, "stream failed at " + failedOp);
+        return f;
     }
 
     /** 固定 schema 解碼後，再以本 store 的 PathLayout 時區驗證精確正式路徑。 */
@@ -296,10 +311,10 @@ public final class WriteHandle implements AutoCloseable {
     /** 重試路徑的當下證據（D44）：重讀 &lt;key&gt; 算 digest 對 manifest。 */
     private FinalizeResult verifyPublished(Path contentPath, Manifest declared) throws NfsException, IOException {
         String actual = Sha256.ofFile(store.nfs, "digest-key", contentPath);
-        cleanupTemps();
         if (!actual.equals(declared.digest())) {
-            return new FinalizeResult.Failure(FailureReason.CONFLICT, "published content " + actual + " != declared " + declared.digest());
+            return fail(FailureReason.CONFLICT, "published content " + actual + " != declared " + declared.digest());
         }
+        cleanupTemps();
         return success(declared.contentPath());
     }
 

@@ -52,11 +52,19 @@ public final class LocalStore {
     }
 
     void linkSent(FileIdentity id, Future<?> link) {
+        // ponytail: 被放棄的 handle 不會再對自己的 identity 呼叫 linkInFlight，已結束的 future 只能在這裡回收。
+        // 每次登記（timeout 才會發生，罕見）掃一遍全部 identity，成本 O(未收斂的 identity 數)。
+        for (FileIdentity k : linksInFlight.keySet()) linkInFlight(k);
         linksInFlight.compute(id, (k, links) -> {
             Set<Future<?>> s = links != null ? links : ConcurrentHashMap.newKeySet();
             s.add(link);
             return s;
         });
+    }
+
+    /** 測試用：仍持有 link future 的 identity 數。 */
+    int inFlightIdentities() {
+        return linksInFlight.size();
     }
 
     /** 先移除已結束者；仍有未結束的 link 才回 true。 */
