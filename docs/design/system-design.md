@@ -37,7 +37,7 @@ Date: 2026-09-22
 │     │ NFS (hard)                    │ NFS       │ JDBC │
 │  ┌──▼────────────────────────────────▼──┐   ┌───▼────┐ │
 │  │  Local Storage (NAS, Node 自有)       │   │ Oracle │ │
-│  │  <src>/<ns>/<bucket>/<key>.manifest │   │ sync   │ │
+│  │  .manifest/<bucket>/<key>.manifest  │   │ sync   │ │
 │  └───────────────────────────────────────┘   │ schema │ │
 │                                              └────────┘ │
 └──────────────────────────────────────────────────────────┘
@@ -79,7 +79,7 @@ write(bytes) ...
 finalize()
   ① fsync .writing
   ② content_path = 宣告時刻的小時目錄（確保存在）；寫 <bucket>/<key>.manifest.<uuid>.tmp {identity, class, size, digest, source_ready_at, uuid, content_path, schema_version} + fsync   (D48 修)
-       link(tmp, <bucket>/<key>.manifest) 原子宣告 → unlink tmp；bucket = hash(key) 前 3 hex，與時間無關   (D44, D48)
+       link(tmp, <bucket>/<key>.manifest) 原子宣告 → unlink tmp；<bucket> = hash(key) 前 3 hex，完整目錄 <src>/<ns>/.manifest/<bucket>/，與時間無關；.manifest/ 避免與 3 字元 Data class 撞名   (D44, D48, P01 偏差 ①)
        EEXIST → 讀既有 manifest（必為完整）：本次請求的 identity、class、size、digest 與之四項皆同 → 續行，content_path 以既有為準；任一不同 → FAILURE(CONFLICT)   (D3, D3a, D53)
        續行先 rediscovery：content_path/<key> 存在且 digest = manifest → SUCCESS，不看年齡；不存在且需再次嘗試發布 → manifest mtime 超過 N = 7 天 → FAILURE(DECLARATION_EXPIRED)，App 換 key；link 已送出結果未明 → PENDING_CONFIRMATION   (D53 修, D51 修 2)
   ③ link(.writing, manifest.content_path/<key>)  ← commit point = Source Ready；跨目錄 link 到 manifest 記的位置，不是暫存目錄也不是當下小時   (D48 修)

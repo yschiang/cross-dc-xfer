@@ -355,7 +355,7 @@ svg.sel .comp:not(.on){opacity:.45}
   <text class="t m b" x="352" y="72">writing/HH/ <tspan class="t s">（當下小時目錄，只放暫存，不是正式位置）</tspan></text>
   <g id="f-writing" data-s="0 1 2 3 4"><rect class="box" x="372" y="84" width="300" height="24" rx="4"/><text class="t m" x="382" y="100">&lt;key&gt;.&lt;uuid&gt;.writing <tspan class="t s">DigestOutputStream</tspan></text></g>
   <g id="f-writing-gone" data-s="5" class="ghost" hidden><rect class="box" x="372" y="84" width="300" height="24" rx="4"/><text class="t m" x="382" y="100">&lt;key&gt;.&lt;uuid&gt;.writing</text><text class="t s" x="640" y="100" text-anchor="end">unlinked</text></g>
-  <text class="t m b" x="352" y="140">&lt;bucket&gt;/ <tspan class="t s">（hash(key) 前 3 hex，與時間無關）</tspan></text>
+  <text class="t m b" x="352" y="140">.manifest/&lt;bucket&gt;/ <tspan class="t s">（bucket = hash(key) 前 3 hex，與時間無關）</tspan></text>
   <g id="f-tmp" data-s="2" hidden><rect class="box" x="372" y="152" width="300" height="24" rx="4"/><text class="t m" x="382" y="168">&lt;key&gt;.manifest.&lt;uuid&gt;.tmp <tspan class="t s">+ fsync</tspan></text></g>
   <g id="f-tmp-gone" data-s="3" class="ghost" hidden><rect class="box" x="372" y="152" width="300" height="24" rx="4"/><text class="t m" x="382" y="168">&lt;key&gt;.manifest.&lt;uuid&gt;.tmp</text><text class="t s" x="640" y="168" text-anchor="end">unlinked</text></g>
   <g id="f-tmp-link" data-s="3" hidden><text class="t lbl src" x="690" y="164">link(tmp → manifest)</text><text class="t lbl src" x="690" y="180">原子宣告 · EEXIST 走四項比對</text></g>
