@@ -187,7 +187,7 @@ svg.sel .comp:not(.on){opacity:.45}
   <dl class="masthead">
     <dt>Version</dt><dd>0.1 draft</dd>
     <dt>Date</dt><dd>2026-09-22</dd>
-    <dt>依據</dt><dd>spec v0.3、CONTEXT.md、ADR-0001～0003、docs/design/design-decisions.md（D1～D56 及修訂）</dd>
+    <dt>依據</dt><dd>spec v0.3、CONTEXT.md、ADR-0001～0003、docs/design/design-decisions.md（D1～D57 及修訂）</dd>
   </dl>
   <p class="meta prose">本文只展開決策，不新增決策；每段標註來源 D 編號。</p>
 </header>
@@ -363,7 +363,7 @@ svg.sel .comp:not(.on){opacity:.45}
   <text class="t m b" x="352" y="72">writing/HH/ <tspan class="t s">（當下小時目錄，只放暫存，不是正式位置）</tspan></text>
   <g id="f-writing" data-s="0 1 2 3 4"><rect class="box" x="372" y="84" width="300" height="24" rx="4"/><text class="t m" x="382" y="100">&lt;key&gt;.&lt;uuid&gt;.writing <tspan class="t s">DigestOutputStream</tspan></text></g>
   <g id="f-writing-gone" data-s="5" class="ghost" hidden><rect class="box" x="372" y="84" width="300" height="24" rx="4"/><text class="t m" x="382" y="100">&lt;key&gt;.&lt;uuid&gt;.writing</text><text class="t s" x="640" y="100" text-anchor="end">unlinked</text></g>
-  <text class="t m b" x="352" y="140">&lt;bucket&gt;/ <tspan class="t s">（hash(key) 前 3 hex，與時間無關）</tspan></text>
+  <text class="t m b" x="352" y="140">.manifest/&lt;bucket&gt;/ <tspan class="t s">（bucket = hash(key) 前 3 hex，與時間無關）</tspan></text>
   <g id="f-tmp" data-s="2" hidden><rect class="box" x="372" y="152" width="300" height="24" rx="4"/><text class="t m" x="382" y="168">&lt;key&gt;.manifest.&lt;uuid&gt;.tmp <tspan class="t s">+ fsync</tspan></text></g>
   <g id="f-tmp-gone" data-s="3" class="ghost" hidden><rect class="box" x="372" y="152" width="300" height="24" rx="4"/><text class="t m" x="382" y="168">&lt;key&gt;.manifest.&lt;uuid&gt;.tmp</text><text class="t s" x="640" y="168" text-anchor="end">unlinked</text></g>
   <g id="f-tmp-link" data-s="3" hidden><text class="t lbl src" x="690" y="164">link(tmp → manifest)</text><text class="t lbl src" x="690" y="180">原子宣告 · EEXIST 走四項比對</text></g>
@@ -696,6 +696,7 @@ svg.sel .comp:not(.on){opacity:.45}
 
 <h2 id="s6"><span class="num">6</span>故障窗口表</h2>
 <p class="prose">每列：故障 → 設計如何封閉 → 決策 → 驗收測試。這是 §21.2 要求的 Requirement→Design→Test 核心；ops 動作見第 8 章。</p>
+<p class="prose"><strong>測試策略（D57）</strong>：每列的測試不只驗正常路徑，還要注入下列故障，並斷言恢復後的最終結果正確。① 每個對外操作（NFS 呼叫、DB 語句、HTTP 呼叫）各注入三種：操作前失敗、操作成功但回覆遺失、暫時失敗後恢復。② 查證與恢復步驟本身也注入失敗；查證失敗不得把未知變成確定（F32）。③ 有外部輸入的地方測邊界：null、型別不符、超出範圍、尾隨內容（F23）。每個 P 負責哪些列，見 P00 roadmap 的「負責 F」欄；具體到哪些操作與語句，由各實作 plan 列成測試矩陣。</p>
 <div class="tbl wrap"><table>
 <thead><tr><th>#</th><th>故障窗口</th><th>封閉方式</th><th>決策</th><th>測試</th></tr></thead>
 <tbody>
@@ -731,7 +732,7 @@ svg.sel .comp:not(.on){opacity:.45}
 <tr><td><kbd class="fid">F20</kbd></td><td>Target 容量不足或 NAS 不健康</td><td>共用閘門立即關閉，最多 4 筆執行中失敗；每輪 statfs 成功後半開一筆探路；Source 只見 UNREACHABLE，原因看 Target 指標；library 端拒寫</td><td class="ref">D43, D21</td><td>T12, T21</td></tr>
 <tr><td><kbd class="fid">F21</kbd></td><td>已知曾 Ready 的 Source 正式內容遺失且義務未完成</td><td>Shallow ①′ 對 content_path 明確得到不存在 → QUARANTINED{SOURCE_LOST} + 一次 UNRECOVERABLE 歷史事件 → 事故告警看事件增量；manifest 消失不等於內容遺失；讀取失敗只計 unknown；永久追蹤，無 ops 動作能結清</td><td class="ref">D56, D33 修 2, RT-01</td><td>T21, T30</td></tr>
 <tr><td><kbd class="fid">F22</kbd></td><td>CP（git / CD）不可用</td><td>不能發新版；Node 只讀本機 active.json；資料流無關</td><td class="ref">D17</td><td>T14, T23, AC-CP-01～03</td></tr>
-<tr><td><kbd class="fid">F23</kbd></td><td>壞設定 / 啟用中 crash</td><td>啟動時驗證，失敗留 candidate 用 active；rename 原子；active 缺或載入失敗用 lkg；新版本只在成功服務後回報</td><td class="ref">D17, D45</td><td>T15, T22, T26, AC-CFG-01～05</td></tr>
+<tr><td><kbd class="fid">F23</kbd></td><td>壞設定 / 啟用中 crash</td><td>啟動時驗證，失敗留 candidate 用 active；驗證採嚴格解析：型別須完全相符、不做隱式轉型（浮點不截成整數、null 不當缺值）、整份輸入須讀完，任一不符即為壞設定；rename 原子；active 缺或載入失敗用 lkg；新版本只在成功服務後回報</td><td class="ref">D17, D45, D57</td><td>T15, T22, T26, AC-CFG-01～05</td></tr>
 <tr><td><kbd class="fid">F24</kbd></td><td>sync DB 部分遺失或 ops <code>rebuild</code>（表仍在）</td><td>隔離（Node 間端點全 503、停排程、等回寫工作結束、<code>rebuild_in_progress</code> 持久化）→ 換 incarnation → 只補不刪：全掃 30 天搜尋窗補建缺的 file_identity / obligation，既有 COMPLETED / QUARANTINED / PENDING 一律保留，PENDING 的 epoch 重設為 1 → 對帳 ② 跑一次：Target 列 incarnation 不同且 valid 且四項相符 → <code>WHERE incarnation = 現行 AND epoch = 1 AND state = PENDING</code> 補 COMPLETED，<code>/received</code> 游標重設為 0 → received 依 D49 ② 只補缺列 → inspection。不可達的 Target 留 PENDING，下輪 ② 或交付換錨補齊；crash 後重啟見旗標重做；期間該 Node 同步暫停，App 照寫，完成時間待量測</td><td class="ref">D29, D29 修, D29 修 2, D29 修 3, D49, D50, D55 修 2</td><td>T18, T19</td></tr>
 <tr><td><kbd class="fid">F24b</kbd></td><td>sync DB 整庫遺失，或備份還原時 identity 已在窗外</td><td>恢復限制：窗外未完成義務無法重建，連 unknown 都不顯示；DB 備份為 ops 責任，還原後仍 rebuild 換 incarnation</td><td class="ref">D56 ⑤</td><td>T18</td></tr>
 <tr><td><kbd class="fid">F25</kbd></td><td>Target DB（received）遺失<strong>或從備份還原</strong></td><td>永不從檔案算基準：向 Source 拉 COMPLETED 義務的 manifest 欄位重建，只補缺列，既有 valid 列與驗證時間保留，digest 由 Deep check 後驗。<strong>既有 invalid 列標 <code>recovery_pending</code> 持久化</strong>，每週期重試直到清除：① 一律以原 event_id 重送 X 確認已保存（不信備份旗標）；② DUPLICATE 後向 Source 取該 identity 的 COMPLETED 證據，基準相符且本地重算通過才恢復 valid；重驗不符或缺 → 換新事件；ACCEPTED 或 Source PENDING / QUARANTINED / STALE / 不可達 → 維持 invalid，等修復交付或下輪重試。缺列由常駐的 Target 端對帳 ② 沿游標續補，還原後未 caught up 前 <code>/locate</code> 回 UNAVAILABLE；DUPLICATE 與 COMPLETED 證據須同一 Source incarnation；回寫皆以 <code>event_id = X</code> 條件更新</td><td class="ref">D49, D29 修 2, D29 修 6, D29 修 7, D29 修 9</td><td>T19, T30</td></tr>
@@ -742,6 +743,8 @@ svg.sel .comp:not(.on){opacity:.45}
 <tr><td><kbd class="fid">F30</kbd></td><td>一個 Source 大量 catch-up 餓死其他 Source</td><td>Target 每 Source 一佇列，4 槽 round-robin</td><td class="ref">D41</td><td>T16</td></tr>
 <tr><td><kbd class="fid">F31</kbd></td><td>非 Required target 的 Node 來拉檔，或冒用他 Node 的 target 參數</td><td><code>/pending</code> <code>/file</code> <code>/report</code> 的 target 取自憑證身分，另帶不同 → 403；<code>/file</code> 查義務，無則 403；<code>/received</code> 只回呼叫者為 Source 的列</td><td class="ref">D40, D14 修, D14 修 2</td><td>—</td></tr>
 <tr><td><kbd class="fid">F29</kbd></td><td>Prometheus / Alertmanager 不可用</td><td>watchdog 停止 → NMS 告警；CLI 扇出仍可回答 §15</td><td class="ref">D27 修, D20 修</td><td>T14, AC-CP-03</td></tr>
+<tr><td><kbd class="fid">F32</kbd></td><td>查證或恢復步驟本身遇暫時錯誤（stat、讀 manifest、算 digest、讀 DB 列時 I/O 錯誤或逾時）</td><td>查證失敗不是確定結果：原本未知的維持未知（PENDING_CONFIRMATION／unknown），恢復後重查；只有查證確定「不存在」或「不符」才轉終態。未知狀態要等所有舊操作結束、且查證確定後才清除，之後新操作的確定錯誤才是終態</td><td class="ref">D3a, D19, D51 修 2, D57</td><td>T13, T25, T27, T29</td></tr>
+<tr><td><kbd class="fid">F33</kbd></td><td>sync DB bootstrap／migration 中途失敗（連線中斷、DDL 執行到一半）</td><td>bootstrap 與 migration 可重跑且冪等：中斷後重跑從斷點接續，不刪、不重設既存資料、計數器與旗標；完成前 readiness 回 DB DOWN、process 不退出、<code>/policy</code> 照常回應</td><td class="ref">D24 修, D34 修, D57</td><td>T06, T23, T32</td></tr>
 </tbody></table></div>
 <div class="fig"><figure>
 <div class="scroll">
