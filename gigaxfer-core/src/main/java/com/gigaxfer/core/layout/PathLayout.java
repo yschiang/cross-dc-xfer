@@ -15,7 +15,7 @@ import java.util.Objects;
 import java.util.UUID;
 
 /**
- * NFS 佈局（D2 修、D48、file-inventory）。
+ * NFS 佈局（D2 修、D48、system-design §3「檔案」）。
  * 內容：<root>/<source>/<ns>/<class>/<yyyy-MM-dd>/<HH>/<key>
  * manifest：<root>/<source>/<ns>/.manifest/<bucket>/<key>.manifest，bucket 只由 key 決定。
  */

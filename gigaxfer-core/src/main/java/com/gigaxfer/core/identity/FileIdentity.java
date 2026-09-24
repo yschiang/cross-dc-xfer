@@ -2,7 +2,7 @@ package com.gigaxfer.core.identity;
 
 /**
  * File identity = (Source Node, Namespace, Logical key)（CONTEXT.md）。
- * 三段直接成為路徑片段；Logical key 另有保留字尾（file-inventory 的 .writing / .tmp / .manifest）。
+ * 三段直接成為路徑片段；Logical key 另有保留字尾（system-design §3「檔案」的 .writing / .tmp / .manifest）。
  */
 public record FileIdentity(String sourceNode, String namespace, String logicalKey) {
     /**

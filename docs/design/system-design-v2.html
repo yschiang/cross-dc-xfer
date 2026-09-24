@@ -591,7 +591,40 @@ svg.sel .comp:not(.on){opacity:.45}
 <p class="prose">library <strong>不快取 READY</strong>，每次 <code>read</code> 重新 <code>/locate</code>；已開啟的串流不撤銷（D23 修 2）。<code>read</code> 僅 READY 時開 path 給 InputStream。不問 Source（D15 修、D23 修）。為什麼不直接 stat：路徑含 Finalize 日期而 identity 沒有；NOT_EXPECTED 需要 Data class 而 identity 沒有。read 不在 Local Transaction SLO 內，本 Node sync service 不是 Remote Node 也不是 CP。</p>
 
 <h2 id="s3"><span class="num">3</span>持久化</h2>
-<p class="prose"><strong>檔案</strong>：見 docs/design/file-inventory.md。</p>
+<p class="prose"><strong>檔案</strong>：Framework 會建立、讀取或刪除的所有檔案。正式內容目錄 <code>&lt;dir&gt;</code> = <code>&lt;source node&gt;/&lt;namespace&gt;/&lt;data class&gt;/&lt;yyyy-mm-dd&gt;/&lt;HH&gt;/</code>（D2 修），小時取第②步宣告時刻，由第一個宣告 manifest 的人決定並記在 manifest 的 content_path（D48 修）；暫存目錄 <code>&lt;wdir&gt;</code> = beginWrite 當下小時目錄，可與 <code>&lt;dir&gt;</code> 不同；manifest 目錄 <code>&lt;mdir&gt;</code> = <code>&lt;source node&gt;/&lt;namespace&gt;/.manifest/&lt;bucket&gt;/</code>，<code>&lt;bucket&gt;</code> = hash(key) 前 3 hex，只由 identity 決定、與時間無關（D48）；多一層 <code>.manifest/</code> 是為了不和 3 個字元的 Data class 目錄撞名（P01 偏差 ①）。小時目錄的時區是 PathLayout 的設定，所有參與同步的 Node 必須相同（P01 偏差 ②）。Logical key 結尾為 <code>.writing</code>、<code>.tmp</code> 或含 <code>.manifest</code> 者於 beginWrite 拒絕，所以下表的暫存與宣告檔名不會和正式檔撞名（P01 偏差 ③）。「刪」欄為空表示 Framework 永不刪（RT-01）。</p>
+<p class="prose"><strong>Source Node NAS</strong></p>
+<div class="tbl wrap"><table>
+<thead><tr><th>檔案</th><th>建</th><th>讀</th><th>刪</th><th>生命週期</th><th>決策</th></tr></thead>
+<tbody>
+<tr><td><code>&lt;wdir&gt;/&lt;key&gt;.&lt;uuid&gt;.writing</code></td><td>library <code>beginWrite</code></td><td>library（fsync、link 來源）</td><td>library Finalize 第④步 unlink；超過 Abandoned TTL 由清道夫刪</td><td>Writing → 跨目錄成為 <code>&lt;dir&gt;/&lt;key&gt;</code> 的 link 來源 → unlink；或 Abandoned；超 TTL 後已送出的 link 結果依 D51 修 2 查證</td><td class="ref">D3, D11, D35, D48 修, D51 修 2</td></tr>
+<tr><td><code>&lt;mdir&gt;/&lt;key&gt;.manifest.&lt;uuid&gt;.tmp</code></td><td>library Finalize 第②步寫入 + fsync</td><td>library（link 來源）</td><td>link 成功後 unlink；殘留由清道夫刪</td><td>一次性</td><td class="ref">D44, D35</td></tr>
+<tr><td><code>&lt;mdir&gt;/&lt;key&gt;.manifest</code></td><td>library Finalize 第②步 link(tmp) 原子宣告；含 content_path</td><td>sync service 掃描、rediscovery、<code>/locate</code></td><td>本版永不刪，不自動也不手動（D53）</td><td>建立 → 與 <code>&lt;key&gt;</code> 一起構成 Source Ready → 永久保留；無內容者為「未發布或發布後遺失」候選；mtime 作桶枚舉粗篩與宣告年齡（N = 7 天，超過不可再次嘗試發布）依據</td><td class="ref">D1, D3, D48, D53, D53 修, D56, P01 偏差</td></tr>
+<tr><td><code>&lt;dir&gt;/&lt;key&gt;</code></td><td>library Finalize 第③步 link</td><td>sync service <code>/file</code> streaming、Consumer <code>read</code></td><td>永不刪，NAS 政策 30 天</td><td>link 成功 = Source Ready = commit point</td><td class="ref">D3, RT-01</td></tr>
+</tbody></table></div>
+<p class="prose"><strong>Target Node NAS</strong></p>
+<div class="tbl wrap"><table>
+<thead><tr><th>檔案</th><th>建</th><th>讀</th><th>刪</th><th>生命週期</th><th>決策</th></tr></thead>
+<tbody>
+<tr><td><code>&lt;dir&gt;/&lt;key&gt;.&lt;uuid&gt;.writing</code></td><td>Target sync service 下載</td><td>自己（DigestInputStream 驗證、fsync）</td><td>驗證失敗即刪；link / rename 逾時時不得先刪（所有權與 in-flight 排他保留至舊操作結束）；crash 或卡住殘留由清道夫依 mtime 刪</td><td>下載中 → 驗證 → 暫存 fsync 成功（穩定寫入、COMMIT 由 OS NFS client 完成，經 failover 驗收）→ link 或 rename 為 <code>&lt;key&gt;</code> → received 提交 → unlink；儲存類錯誤走 D43 閘門，不算單檔驗證失敗</td><td class="ref">D12, D12 修, D12 修 2, D43, D51, D35</td></tr>
+<tr><td><code>&lt;dir&gt;/&lt;key&gt;</code></td><td>Target sync service link 發布；修復時 rename 原子覆蓋</td><td>Consumer <code>read</code>、Deep check 重算 digest、DB 重建</td><td>永不刪，NAS 政策</td><td>link 成功 = Target Ready</td><td class="ref">D12, D15, D16, D47</td></tr>
+</tbody></table></div>
+<p class="prose">Target 端不寫 <code>.manifest</code> 與 <code>.evidence</code>；基準在 Source manifest 與 Target DB received 表（D12、D15）。</p>
+<p class="prose"><strong>sync 主機本機磁碟</strong></p>
+<div class="tbl wrap"><table>
+<thead><tr><th>檔案</th><th>建</th><th>讀</th><th>刪</th><th>生命週期</th><th>決策</th></tr></thead>
+<tbody>
+<tr><td><code>candidate.json.tmp</code> → <code>candidate.json</code></td><td>CD pipeline 寫 tmp 後 rename</td><td>sync service 驗證</td><td>驗證後 rename 為 active，或驗證失敗留原地並上報</td><td>一次性；sync service 只認 <code>candidate.json</code>，<code>.tmp</code> 一律忽略</td><td class="ref">D17</td></tr>
+<tr><td><code>active.json</code></td><td>sync service 啟動時由 candidate rename</td><td>sync service 啟動讀一次、<code>/policy</code></td><td>下一版啟用時 rename 為 lkg</td><td>當前生效版本</td><td class="ref">D17, D18</td></tr>
+<tr><td><code>lkg.json</code></td><td>sync service 由 active rename</td><td>sync service 啟動時 active 缺失的備援</td><td>下一版啟用時被覆蓋</td><td>上一個成功版本</td><td class="ref">D17</td></tr>
+<tr><td>Node token 秘密檔（路徑由部署決定）</td><td>ops 部署時放置，不進 git</td><td>sync service 啟動讀取，作為呼叫他 Node 時的憑證；驗證端只持有各 Node token 的雜湊、不持明文</td><td>永不刪；輪替為 ops 程序（operational policy 可調項），新值覆寫</td><td>每 Node 一份，輪替時覆寫</td><td class="ref">D14 修, D14 修 2, D30</td></tr>
+</tbody></table></div>
+<p class="prose"><strong>Application 主機本機磁碟</strong></p>
+<div class="tbl wrap"><table>
+<thead><tr><th>檔案</th><th>建</th><th>讀</th><th>刪</th><th>生命週期</th><th>決策</th></tr></thead>
+<tbody>
+<tr><td><code>&lt;app data dir&gt;/file-sync-policy.json</code>（D23 修）</td><td>library 每次成功 <code>GET /policy</code> 後覆寫</td><td>library 啟動且 sync service 不可達時</td><td>永不刪</td><td>最近一次成功取得的 Policy 段</td><td class="ref">D18</td></tr>
+</tbody></table></div>
+<p class="prose"><strong>不存在的檔案（已否決）</strong>：<code>.evidence</code>、Abandoned 搬移目錄、Target <code>.manifest</code>、<code>.corrupt</code> 證據檔（見「簡化審查」列與 D47）。</p>
 <p class="prose"><strong>DB schema</strong>（D24，Oracle，sync 自有 schema，SQL 可攜、H2 Oracle mode 測試）：</p>
 <div class="tbl wrap"><table>
 <thead><tr><th>表</th><th>欄位</th><th>索引</th></tr></thead>

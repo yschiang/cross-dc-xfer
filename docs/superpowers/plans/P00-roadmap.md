@@ -1,6 +1,6 @@
 # 實作路線圖（Plan 00）
 
-> 依據：`docs/spec.md` v0.3、`docs/design/system-design.md`、`docs/design/design-decisions.md`（D1–D56 及修訂）、`docs/design/monitoring.md`、`docs/design/file-inventory.md`、ADR-0001～0003。
+> 依據：`docs/spec.md` v0.3、`docs/design/system-design.md`、`docs/design/design-decisions.md`（D1–D57 及修訂）、`docs/design/monitoring.md`、ADR-0001～0003。
 > 交付分為 M1、M2；實作範圍與依賴以 P01–P14 管理。協作方式見 [README 工作流](../../../README.md#工作流)。
 
 ## Milestone → Feature → 實作計畫對照

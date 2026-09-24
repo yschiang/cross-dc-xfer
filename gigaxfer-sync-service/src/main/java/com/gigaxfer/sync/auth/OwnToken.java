@@ -10,7 +10,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-/** 本 Node 的明文 token：啟動時自本機秘密檔讀一次（file-inventory）。供後續對他 Node 的呼叫使用。 */
+/** 本 Node 的明文 token：啟動時自本機秘密檔讀一次（system-design §3「檔案」）。供後續對他 Node 的呼叫使用。 */
 @Component
 public class OwnToken {
     private static final Logger log = LoggerFactory.getLogger(OwnToken.class);
