@@ -61,4 +61,11 @@ public final class Sha256 {
         }
         return format(md);
     }
+
+
+    /** sha256 hex（不帶 "sha256:" 前綴），供 token 雜湊等非檔案用途。 */
+    public static String hex(byte[] data) {
+        MessageDigest md = newDigest();
+        return HexFormat.of().formatHex(md.digest(data));
+    }
 }

@@ -1,0 +1,320 @@
+package com.gigaxfer.sync.config;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import com.gigaxfer.core.config.ConfigCodec;
+import com.gigaxfer.core.config.NodeConfig;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFilePermission;
+import java.util.Set;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+class ConfigStoreTest {
+    @TempDir Path dir;
+
+    private static String fixture() throws IOException {
+        try (InputStream in = ConfigStoreTest.class.getResourceAsStream("/config/v3.json")) {
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        }
+    }
+
+    private static String withVersion(String json, long v) {
+        return json.replace("\"version\": 3", "\"version\": " + v);
+    }
+
+    private void put(String name, String content) throws IOException {
+        Files.writeString(dir.resolve(name), content);
+    }
+
+    @Test
+    void refuses_when_neither_active_nor_lkg_exists() {
+        assertThatThrownBy(() -> new ConfigStore(dir).load())
+            .isInstanceOf(ConfigUnavailableException.class);
+    }
+
+    @Test
+    void loads_active_when_no_candidate() throws Exception {
+        put("active.json", fixture());
+        ConfigActivation a = new ConfigStore(dir).load();
+        assertThat(a.source()).isEqualTo(ConfigActivation.Source.ACTIVE);
+        assertThat(a.config().version()).isEqualTo(3L);
+        assertThat(a.activationFailure()).isEmpty();
+        assertThat(dir.resolve("lkg.json")).doesNotExist();
+    }
+
+    @Test
+    void falls_back_to_lkg_when_active_missing() throws Exception {
+        put("lkg.json", withVersion(fixture(), 2));
+        ConfigActivation a = new ConfigStore(dir).load();
+        assertThat(a.source()).isEqualTo(ConfigActivation.Source.LKG);
+        assertThat(a.config().version()).isEqualTo(2L);
+        assertThat(a.activationFailure()).isPresent();
+    }
+
+    @Test
+    void falls_back_to_lkg_when_active_is_corrupt() throws Exception {
+        put("active.json", "{ not json");
+        put("lkg.json", withVersion(fixture(), 2));
+        ConfigActivation a = new ConfigStore(dir).load();
+        assertThat(a.source()).isEqualTo(ConfigActivation.Source.LKG);
+        assertThat(a.activationFailure()).isPresent();
+    }
+
+    @Test
+    void activates_valid_candidate_and_rotates_active_to_lkg() throws Exception {
+        put("active.json", withVersion(fixture(), 3));
+        put("candidate.json", withVersion(fixture(), 4));
+        ConfigActivation a = new ConfigStore(dir).load();
+        assertThat(a.source()).isEqualTo(ConfigActivation.Source.ACTIVE);
+        assertThat(a.config().version()).isEqualTo(4L);
+        assertThat(a.activationFailure()).isEmpty();
+        assertThat(dir.resolve("candidate.json")).doesNotExist();
+        assertThat(ConfigCodec.decode(Files.readAllBytes(dir.resolve("active.json"))).version()).isEqualTo(4L);
+        assertThat(ConfigCodec.decode(Files.readAllBytes(dir.resolve("lkg.json"))).version()).isEqualTo(3L);
+    }
+
+    @Test
+    void corrupt_active_does_not_overwrite_good_lkg_when_candidate_activates() throws Exception {
+        put("active.json", "{ not json");
+        put("lkg.json", withVersion(fixture(), 2));
+        put("candidate.json", withVersion(fixture(), 4));
+        ConfigActivation a = new ConfigStore(dir).load();
+        assertThat(a.source()).isEqualTo(ConfigActivation.Source.ACTIVE);
+        assertThat(a.config().version()).isEqualTo(4L);
+        assertThat(dir.resolve("candidate.json")).doesNotExist();
+        assertThat(ConfigCodec.decode(Files.readAllBytes(dir.resolve("lkg.json"))).version()).isEqualTo(2L);
+        assertThat(a.activationFailure()).hasValueSatisfying(r -> assertThat(r).contains("active.json unreadable")); // D45：計失敗
+    }
+
+    @Test
+    void rejects_candidate_with_non_increasing_version_and_keeps_it() throws Exception {
+        put("active.json", withVersion(fixture(), 3));
+        // 同版本但內容不同（同 bytes 的 candidate 視為已生效，見 candidate_identical_to_active_is_cleared_without_failure）
+        String sameVersionChanged = withVersion(fixture(), 3).replace("\"pending_limit\": 200", "\"pending_limit\": 300");
+        assertThat(sameVersionChanged).isNotEqualTo(withVersion(fixture(), 3));
+        put("candidate.json", sameVersionChanged);
+        ConfigActivation a = new ConfigStore(dir).load();
+        assertThat(a.config().version()).isEqualTo(3L);
+        assertThat(a.activationFailure()).hasValueSatisfying(r -> assertThat(r).contains("version"));
+        assertThat(dir.resolve("candidate.json")).exists();
+        assertThat(dir.resolve("lkg.json")).doesNotExist();
+    }
+
+    @Test
+    void rejects_candidate_whose_policy_differs() throws Exception {
+        put("active.json", withVersion(fixture(), 3));
+        put("candidate.json", withVersion(fixture(), 4).replace("\"targets\": [\"P1\"]", "\"targets\": [\"P1\", \"P3\"]"));
+        ConfigActivation a = new ConfigStore(dir).load();
+        assertThat(a.config().version()).isEqualTo(3L);
+        assertThat(a.activationFailure()).isPresent().get().asString().contains("policy");
+        assertThat(dir.resolve("candidate.json")).exists();
+    }
+
+    @Test
+    void accepts_candidate_that_only_changes_operational_and_node_order() throws Exception {
+        put("active.json", withVersion(fixture(), 3));
+        put("candidate.json", withVersion(fixture(), 4)
+            .replace("\"pending_limit\": 200", "\"pending_limit\": 100")
+            .replace("[\"P1\", \"P2\", \"P3\"]", "[\"P3\", \"P2\", \"P1\"]"));
+        ConfigActivation a = new ConfigStore(dir).load();
+        assertThat(a.config().version()).isEqualTo(4L);
+        assertThat(a.config().operational().pendingLimit()).isEqualTo(100);
+    }
+
+    @Test
+    void rejects_malformed_candidate_and_keeps_active() throws Exception {
+        put("active.json", withVersion(fixture(), 3));
+        put("candidate.json", "{ \"schema_version\": 1 ");
+        ConfigActivation a = new ConfigStore(dir).load();
+        assertThat(a.config().version()).isEqualTo(3L);
+        assertThat(a.activationFailure()).isPresent();
+        assertThat(dir.resolve("candidate.json")).exists();
+    }
+
+    @Test
+    void crash_between_renames_recovers_on_next_start() throws Exception {
+        // 模擬：active→lkg 已完成、candidate→active 尚未完成時 crash。
+        put("lkg.json", withVersion(fixture(), 3));
+        put("candidate.json", withVersion(fixture(), 4));
+        ConfigActivation a = new ConfigStore(dir).load();
+        assertThat(a.source()).isEqualTo(ConfigActivation.Source.ACTIVE);
+        assertThat(a.config().version()).isEqualTo(4L);
+        assertThat(dir.resolve("candidate.json")).doesNotExist();
+        assertThat(ConfigCodec.decode(Files.readAllBytes(dir.resolve("lkg.json"))).version()).isEqualTo(3L);
+    }
+
+    @Test
+    void candidate_is_validated_against_lkg_when_active_missing() throws Exception {
+        put("lkg.json", withVersion(fixture(), 3));
+        put("candidate.json", withVersion(fixture(), 4).replace("\"targets\": [\"P1\"]", "\"targets\": [\"P1\", \"P3\"]"));
+        ConfigActivation a = new ConfigStore(dir).load();
+        assertThat(a.source()).isEqualTo(ConfigActivation.Source.LKG);
+        assertThat(a.config().version()).isEqualTo(3L);
+        assertThat(a.activationFailure()).isPresent().get().asString().contains("policy");
+        assertThat(dir.resolve("candidate.json")).exists();
+    }
+
+    @Test
+    void candidate_alone_does_not_bypass_manual_initial_active_setup() throws Exception {
+        put("candidate.json", withVersion(fixture(), 1));
+        assertThatThrownBy(() -> new ConfigStore(dir).load())
+            .isInstanceOf(ConfigUnavailableException.class);
+        assertThat(dir.resolve("active.json")).doesNotExist();
+        assertThat(dir.resolve("candidate.json")).exists();
+    }
+
+    @Test
+    void rejects_candidate_that_changes_registered_namespaces() throws Exception {
+        put("active.json", fixture());
+        put("candidate.json", withVersion(fixture(), 4).replace(
+            "\"namespaces\": [\"transactions\", \"analytics\"]",
+            "\"namespaces\": [\"transactions\"]"));
+        ConfigActivation activation = new ConfigStore(dir).load();
+        assertThat(activation.config().version()).isEqualTo(3L);
+        assertThat(activation.activationFailure()).isPresent().get().asString().contains("policy");
+        assertThat(dir.resolve("candidate.json")).exists();
+    }
+
+    @Test
+    void corrupt_active_without_lkg_refuses_even_with_good_candidate() throws Exception {
+        put("active.json", "{ not json");
+        put("candidate.json", withVersion(fixture(), 4));
+        assertThatThrownBy(() -> new ConfigStore(dir).load())
+            .isInstanceOf(ConfigUnavailableException.class);
+        assertThat(dir.resolve("candidate.json")).exists();
+        assertThat(Files.readString(dir.resolve("active.json"))).isEqualTo("{ not json");
+    }
+
+    @Test
+    void ignores_candidate_tmp_still_being_written_by_cd() throws Exception {
+        put("active.json", fixture());
+        put("candidate.json.tmp", "partial");
+        ConfigActivation a = new ConfigStore(dir).load();
+        assertThat(a.config().version()).isEqualTo(3L);
+        assertThat(a.activationFailure()).isEmpty();
+    }
+
+    /** 讓檔案對本 process 不可讀；以 root 執行時權限不生效，測試跳過。 */
+    private void makeUnreadable(String name) throws IOException {
+        Path p = dir.resolve(name);
+        Files.setPosixFilePermissions(p, Set.<PosixFilePermission>of());
+        Assumptions.assumeFalse(Files.isReadable(p), "running as root: file permissions not enforced");
+    }
+
+    @Test
+    void unreadable_active_falls_back_to_lkg() throws Exception {
+        put("active.json", withVersion(fixture(), 3));
+        put("lkg.json", withVersion(fixture(), 2));
+        makeUnreadable("active.json");
+        ConfigActivation a = new ConfigStore(dir).load();
+        assertThat(a.source()).isEqualTo(ConfigActivation.Source.LKG);
+        assertThat(a.config().version()).isEqualTo(2L);
+        assertThat(a.activationFailure()).hasValueSatisfying(r -> assertThat(r).contains("active.json unreadable"));
+    }
+
+    @Test
+    void unreadable_candidate_is_rejected_and_active_kept() throws Exception {
+        put("active.json", withVersion(fixture(), 3));
+        put("candidate.json", withVersion(fixture(), 4));
+        makeUnreadable("candidate.json");
+        ConfigActivation a = new ConfigStore(dir).load();
+        assertThat(a.source()).isEqualTo(ConfigActivation.Source.ACTIVE);
+        assertThat(a.config().version()).isEqualTo(3L);
+        assertThat(a.activationFailure()).hasValueSatisfying(r -> assertThat(r).contains("candidate.json rejected"));
+        assertThat(dir.resolve("candidate.json")).exists();
+    }
+
+    /** 安裝途中 I/O 失敗（此處 lkg.json 位置被非空目錄占住，active→lkg 失敗）也算 candidate 被拒，不讓 process 起不來。 */
+    @Test
+    void activation_io_failure_keeps_running_config_and_candidate() throws Exception {
+        put("active.json", withVersion(fixture(), 3));
+        put("candidate.json", withVersion(fixture(), 4));
+        Files.createDirectories(dir.resolve("lkg.json"));
+        Files.writeString(dir.resolve("lkg.json").resolve("occupied"), "x");
+        ConfigActivation a = new ConfigStore(dir).load();
+        assertThat(a.config().version()).isEqualTo(3L);
+        assertThat(a.source()).isEqualTo(ConfigActivation.Source.ACTIVE);
+        assertThat(a.activationFailure()).hasValueSatisfying(r -> assertThat(r).contains("activation failed"));
+        assertThat(ConfigCodec.decode(Files.readAllBytes(dir.resolve("active.json"))).version()).isEqualTo(3L);
+        assertThat(dir.resolve("candidate.json")).exists();
+    }
+
+    /** D17：CD 在驗證與安裝之間換上改了 Policy 的 candidate，它不得成為 active；留給下次啟動重驗並被拒。 */
+    @Test
+    void candidate_replaced_after_validation_is_not_activated() throws Exception {
+        put("active.json", withVersion(fixture(), 3));
+        put("candidate.json", withVersion(fixture(), 4));
+        String v6BadPolicy = withVersion(fixture(), 6).replace("\"targets\": [\"P1\"]", "\"targets\": [\"P1\", \"P3\"]");
+        assertThat(v6BadPolicy).isNotEqualTo(withVersion(fixture(), 6));
+        Runnable cdSwap = () -> {
+            try {
+                put("candidate.json.tmp", v6BadPolicy);
+                Files.move(dir.resolve("candidate.json.tmp"), dir.resolve("candidate.json"), StandardCopyOption.ATOMIC_MOVE);
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        };
+
+        ConfigActivation first = new ConfigStore(dir, cdSwap).load();
+        assertThat(first.config().version()).isEqualTo(4L);
+        assertThat(ConfigCodec.decode(Files.readAllBytes(dir.resolve("active.json"))).version()).isEqualTo(4L);
+        assertThat(Files.readString(dir.resolve("candidate.json"))).isEqualTo(v6BadPolicy);
+
+        ConfigActivation second = new ConfigStore(dir).load();
+        assertThat(second.config().version()).isEqualTo(4L);
+        assertThat(second.activationFailure()).hasValueSatisfying(r -> assertThat(r).contains("policy"));
+    }
+
+    /** 安裝完成、刪 candidate 前 crash：下次啟動看到同 bytes 的 candidate，補刪且不算失敗。 */
+    @Test
+    void candidate_identical_to_active_is_cleared_without_failure() throws Exception {
+        put("active.json", withVersion(fixture(), 4));
+        put("lkg.json", withVersion(fixture(), 3));
+        put("candidate.json", withVersion(fixture(), 4));
+        ConfigActivation a = new ConfigStore(dir).load();
+        assertThat(a.config().version()).isEqualTo(4L);
+        assertThat(a.activationFailure()).isEmpty();
+        assertThat(dir.resolve("candidate.json")).doesNotExist();
+        assertThat(ConfigCodec.decode(Files.readAllBytes(dir.resolve("lkg.json"))).version()).isEqualTo(3L);
+    }
+
+    /** P02-05：active 內容是 JSON null 時退回 lkg，不讓 process 起不來。 */
+    @Test
+    void null_active_falls_back_to_lkg() throws Exception {
+        put("active.json", "null");
+        put("lkg.json", withVersion(fixture(), 2));
+        ConfigActivation a = new ConfigStore(dir).load();
+        assertThat(a.source()).isEqualTo(ConfigActivation.Source.LKG);
+        assertThat(a.config().version()).isEqualTo(2L);
+        assertThat(a.activationFailure()).hasValueSatisfying(r -> assertThat(r).contains("active.json unreadable"));
+    }
+
+    /** P02-03／P02-05：null、帶小數的整數欄位、JSON 後接垃圾的 candidate 都被拒，active 保留且記失敗。 */
+    @Test
+    void null_coerced_or_trailing_garbage_candidates_are_rejected_and_active_kept() throws Exception {
+        String v4 = withVersion(fixture(), 4);
+        for (String bad : new String[] {
+                "null",
+                v4.replace("\"search_window_days\": 30", "\"search_window_days\": 30.9"),
+                v4.replace("\"schema_version\": 1", "\"schema_version\": 1.9"),
+                v4 + " invalid-json"}) {
+            assertThat(bad).isNotEqualTo(v4);
+            put("active.json", withVersion(fixture(), 3));
+            put("candidate.json", bad);
+            ConfigActivation a = new ConfigStore(dir).load();
+            assertThat(a.config().version()).isEqualTo(3L);
+            assertThat(a.source()).isEqualTo(ConfigActivation.Source.ACTIVE);
+            assertThat(a.activationFailure()).hasValueSatisfying(r -> assertThat(r).contains("candidate.json rejected"));
+            assertThat(Files.readString(dir.resolve("candidate.json"))).isEqualTo(bad);
+            assertThat(dir.resolve("lkg.json")).doesNotExist();
+        }
+    }
+}

@@ -1,0 +1,33 @@
+server:
+  port: 8080
+spring:
+  application:
+    name: gigaxfer-sync
+  flyway:
+    enabled: false          # migration 由 DbBootstrap 在背景重試執行（D34 修）
+  datasource:
+    hikari:
+      initialization-fail-timeout: -1   # DB 不可用時不阻擋啟動
+      maximum-pool-size: 8
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,info
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db,nfs
+  health:
+    db:
+      enabled: false   # 關掉 Boot 內建 DataSource indicator：migration 未完成時它也回 UP，語意不對；自訂 db 取代
+  metrics:
+    tags:
+      node: ${gigaxfer.node}
+gigaxfer:
+  nfs-timeout: 30s
+  nfs-slots: 16

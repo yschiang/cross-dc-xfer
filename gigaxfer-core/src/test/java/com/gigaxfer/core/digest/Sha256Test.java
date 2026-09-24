@@ -49,4 +49,10 @@ class Sha256Test {
         String s = Sha256.ofBytes(new byte[0]);
         assertThat(s).startsWith("sha256:").hasSize(7 + 64).matches("sha256:[0-9a-f]{64}");
     }
+
+    @Test
+    void hex_of_p1_secret_matches_fixture() {
+        assertThat(Sha256.hex("p1-secret".getBytes(StandardCharsets.UTF_8)))
+            .isEqualTo("a770a998b69adca5f88498fcd315c7d49d54b3ab2091c6f8afab58390bb1da1a");
+    }
 }

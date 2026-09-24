@@ -2549,3 +2549,91 @@ git commit -m "docs(sync): sync-service README, P02 design deviations, file inve
 - [ ] `docs/validation/P02-validation.md` 記錄 base／HEAD、環境、命令、結果、仍待驗證項目；PR 引用 ticket 與本 plan。
 
 本輪只交付 ticket 與計畫修訂，沒有執行上述實作步驟，也沒有以原本的測試通過數替新增 Namespace 契約背書。
+
+---
+
+## 修正 tasks（2026-09-23 接續審查後新增；依 ledger 續行）
+
+以下是把本修訂套到 `0f3f916` 之後**必須額外執行**的工作。Task 1–3 在舊 ledger 已標 complete，但受本修訂影響；不得因舊標記略過。每個修正 task 走完整 implementer → review 流程。Task 4–7 未開始，直接依上文（含本節補充）執行。
+
+### Task 1R：Namespace 登錄與 `deployment`（gigaxfer-core）
+
+**Files:** Modify `gigaxfer-core/src/main/java/com/gigaxfer/core/config/{Policy,ConfigCodec}.java`、`gigaxfer-core/src/test/java/com/gigaxfer/core/config/ConfigCodecTest.java`、`gigaxfer-core/src/test/resources/config/v3.json`、`gigaxfer-sync-service/src/test/resources/config/v3.json`。
+
+- [ ] Step 1：兩份 fixture `v3.json` 的 `policy` 段改為上文「設定檔格式」：`"fab"` → `"deployment": "example-deployment"`，加 `"namespaces": ["transactions", "analytics"]`。
+- [ ] Step 2：`ConfigCodecTest` 依上文 Task 1 Step 1 更新：`fab` 斷言改 `deployment`；`encode_policy_is_single_line_snake_case_json` 改為 `startsWith("{")` + `contains("\"namespaces\":[\"analytics\",\"transactions\"]")`；新增 `registry_rejects_unregistered_namespace_but_allows_local_only_class`、`namespace_registry_is_validated_and_part_of_policy_identity`；新增 `rejects_duplicate_peer_token_hash`（P2 的雜湊改成與 P1 相同 → InvalidConfigException，訊息含 "uniquely"）。跑到紅。
+- [ ] Step 3：`Policy` 改為 `Policy(deployment, nodes, namespaces, requiredTargets)`，加 `isNamespaceRegistered`、`allowsWrite`，`normalized()` 排序 namespaces（上文 Task 1 Step 4 的版本）。
+- [ ] Step 4：`ConfigCodec.validatePolicy` 加 namespaces 驗證（非 null、每項合法 segment、不重複）；`validateOperational` 加 token 雜湊唯一性（上文 Task 1 Step 5 的版本）；`policy.fab is required` 改 `policy.deployment is required`。
+- [ ] Step 5：`mvn -q test` 全綠（sync-service 的 ConfigStoreTest / PolicyEndpointTest 因 fixture 改動仍須通過；`PolicyEndpointTest` 對 `$.policy.fab` 的斷言在 Task 3R 改，本 task 先讓它以 `deployment` 通過或暫時移除該行——**選擇改為 `deployment`**）。
+- [ ] Step 6：commit `feat(core): namespace registry, deployment id and unique peer token hashes in Policy`。
+
+### Task 2R：candidate-only 初始化拒絕、Namespace 變更拒絕（gigaxfer-sync-service）
+
+**Files:** Modify `gigaxfer-sync-service/src/main/java/com/gigaxfer/sync/config/ConfigStore.java`、`.../test/.../ConfigStoreTest.java`。
+
+- [ ] Step 1：`ConfigStoreTest`：把 `first_initialisation_accepts_candidate_when_nothing_else_exists` 改成 `candidate_alone_does_not_bypass_manual_initial_active_setup`（上文 Task 2 Step 3 版本：拋 `ConfigUnavailableException`、active 不存在、candidate 仍在）；新增 `rejects_candidate_that_changes_registered_namespaces`。跑到紅（前者）。
+- [ ] Step 2：`ConfigStore.load()`：在檢查 candidate 之前加 `if (baseline.isEmpty()) throw new ConfigUnavailableException("no valid active or lkg config; initialise active.json first");`（上文 Task 2 Step 5 版本）。ADR-0003 / D17：首次初始化由人工放 active.json。
+- [ ] Step 3：`mvn -q test` 全綠；commit `fix(sync): refuse candidate-only initialisation; namespace change is a policy change`。
+
+### Task 3R：`/policy` 輸出 namespaces、設定不可變契約測試、補做 Task 3 審查
+
+**Files:** Modify `gigaxfer-sync-service/src/test/java/com/gigaxfer/sync/config/PolicyEndpointTest.java`（production 的 `PolicyController` 直接輸出 `ConfigCodec.encodePolicy`，namespaces 隨 Task 1R 自動出現，預期不需改 production）。
+
+- [ ] Step 1：`PolicyEndpointTest.policy_endpoint_returns_version_and_normalised_policy_without_auth` 加 `$.policy.deployment == "example-deployment"`、`$.policy.namespaces[0] == "analytics"`、`$.policy.namespaces[1] == "transactions"`。
+- [ ] Step 2：新增測試 `config_is_immutable_while_process_runs`（P02-04）：
+
+```java
+    @Test
+    void config_is_immutable_while_process_runs() throws Exception {
+        java.nio.file.Path active = configDir().resolve("active.json");
+        String original = java.nio.file.Files.readString(active);
+        java.nio.file.Files.writeString(active, original.replace("\"version\": 3", "\"version\": 9"));
+        try {
+            mvc.perform(get("/policy")).andExpect(jsonPath("$.version").value(3));
+            assertThat(meters.get("active_config_version").tag("node", "P1").gauge().value()).isEqualTo(3.0);
+        } finally {
+            java.nio.file.Files.writeString(active, original);
+        }
+    }
+```
+
+- [ ] Step 3：`mvn -q test` 全綠；commit `test(sync): /policy exposes namespaces; config immutable while running`。
+- [ ] Step 4：控制器對 `1617096..HEAD`（Task 3 + 3R）做一次 task review（Task 3 原審查未完成）。
+
+### Task 4 補充（併入 Task 4 執行）
+
+- `V1__schema.sql` 的 `received` 含 `content_path VARCHAR(1024) NOT NULL`（上文已改）。
+- `SchemaTest` 用上文的 `bootstrap_is_idempotent_across_restarts`（非零計數器與 rebuild 旗標保留）與 `remote_received_keeps_source_selected_path_without_local_source_row`。
+- 新增 P02-08 測試 `db_becomes_ready_without_restart_after_outage`：以 `@TestConfiguration` 提供包裝 `DataSource`（`getConnection()` 在旗標 `down=true` 時丟 `SQLException`），測試開始時 `down=true` → 等 2 個重試週期（`DbBootstrap.RETRY_MILLIS`，測試 profile 以 `gigaxfer.db-retry-millis=200` 縮短）確認 `db.ready()==false`、`/actuator/health` 的 `db` 為 DOWN 且 `/policy` 200 → `down=false` → `awaitReady(10 s)` 為 true。為此 `DbBootstrap.RETRY_MILLIS` 改為讀 `SyncProperties.dbRetryMillis()`（預設 5000；`SyncProperties` 加第七欄 `Long dbRetryMillis`，null 視為 5000）。此測試放獨立類別 `DbOutageRecoveryTest`（自己的 context，不繼承 `SyncTestSupport` 的共用 context 以免污染）。
+
+### Task 5 補充（併入 Task 5 執行）
+
+- `HealthEndpointTest` 加 `nfs_component_is_down_when_probe_times_out`：以 `@TestConfiguration` + `@Primary` 提供 `NfsExecutor`，其 `call` 直接丟 `new NfsTimeoutException("stat-root")`（建構子簽章以 P01 實際為準）→ `components.nfs.status == DOWN`、detail `op == stat-root`。放獨立類別 `NfsTimeoutHealthTest`。
+- README「啟動序列」註明：systemd 只看 process 存活（`Restart=always`），不打 readiness；readiness DOWN 不觸發重啟（D34 修）。
+
+### Task 6 補充（併入 Task 6 執行）
+
+- `EchoCallerController` 加 `GET /received`（只回 `{"caller": …}`，**不呼叫** `requireTarget`）；`NodeAuthFilterTest` 加 `received_does_not_apply_target_equals_caller_rule`：`/received?target=P3` + P2 token → 200、caller=P2。README 明寫「只列出 caller 為 Source 的資料」交 P04。
+
+### Task 7 補充（併入 Task 7 執行）
+
+- 新增 `docs/validation/P02-validation.md`：base/HEAD、環境（arm64 macOS、JDK 27 `--release 21`、H2 2.x Oracle mode、本機檔案系統）、命令、逐 AC（P02-01～12）對應測試名稱與結果、尚未驗證（Oracle 實機、真實 NAS、HTTPS、跨 Node）。
+- README 補：首次初始化步驟（人工放 active.json）、設定更新 / 失敗回退操作、DB 斷線復原觀察方式、認證檢查 `curl` 範例、health / metrics 回應範例、HTTPS 部署要求。
+- commit 署名：記錄實際執行者（subagent 用其實際模型名），不預填。
+
+## Ticket AC 對照（接續審查時的狀態，基準 `0f3f916`）
+
+| AC | 對應 task | 既有實作 / 測試證據 | 缺口 → 修正 |
+| --- | --- | --- | --- |
+| P02-01 獨立啟動 | Task 3、5 | `ConfigBootstrap` 檢查 node ∈ nodes；`PolicyEndpointTest`（3）；啟動不掃描（P03 才有掃描器） | health 待 Task 5 |
+| P02-02 Policy 登錄契約 | Task 1R、3R | `Policy.targetsFor` 已分辨未登錄 / 空 targets | Namespace 名單、`isNamespaceRegistered`、`allowsWrite`、`/policy` 輸出 → 1R、3R |
+| P02-03 設定驗證 | Task 1、1R、2 | `ConfigCodecTest`（17）、`ConfigStoreTest` 版本 / policy 拒絕 | namespaces 驗證、token 雜湊唯一 → 1R |
+| P02-04 安全啟用 | Task 2、3、3R | `accepts_candidate_that_only_changes_operational_and_node_order`；gauge = version | 運行期改檔不影響記憶體 → 3R 測試 |
+| P02-05 失敗與回退 | Task 2、2R、3 | 拒絕留 candidate、lkg 回退、壞 active 不覆蓋 lkg（`1617096`）、`activation_failure_count` | candidate-only 初始化拒絕 → 2R |
+| P02-06 中斷恢復 | Task 2 | `crash_between_renames_recovers_on_next_start` | 設定啟用不觸碰 DB，義務與控制狀態由 schema 持有（Task 4） |
+| P02-07 schema 與冪等 bootstrap | Task 4 | 無 | 全部 → Task 4（含 `received.content_path`、非零計數器保留） |
+| P02-08 DB 故障恢復 | Task 4、5 | 無 | `DbOutageRecoveryTest` → Task 4 補充 |
+| P02-09 health 語意 | Task 5 | 無 | 含 NFS timeout → Task 5 補充 |
+| P02-10 Node 認證 | Task 6 | 無 | 全部 → Task 6 |
+| P02-11 角色身分 | Task 6 | 無 | `/received` 不套 target 規則 → Task 6 補充 |
+| P02-12 可交接可重現 | Task 7 | `gigaxfer-core/README.md` 只涵蓋 P01 | README + `docs/validation/P02-validation.md` → Task 7 |

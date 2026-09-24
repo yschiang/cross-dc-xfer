@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "version": 3,
+  "published_by": "alice",
+  "published_at": "2026-09-20T02:00:00Z",
+  "policy": {
+    "deployment": "example-deployment",
+    "nodes": ["P1", "P2", "P3"],
+    "namespaces": ["transactions", "analytics"],
+    "required_targets": [
+      { "source_node": "P1", "data_class": "lot-log", "targets": ["P2", "P3"] },
+      { "source_node": "P1", "data_class": "local-only", "targets": [] },
+      { "source_node": "P2", "data_class": "lot-log", "targets": ["P1"] }
+    ]
+  },
+  "operational": {
+    "scan_interval_seconds": 10,
+    "poll_interval_seconds": 5,
+    "pending_limit": 200,
+    "transfer_timeout_base_seconds": 30,
+    "transfer_timeout_bytes_per_second": 1048576,
+    "target_concurrency": 4,
+    "target_rate_limit_bytes_per_second": 52428800,
+    "file_work_budget": 48,
+    "unreachable_polls": 12,
+    "backoff_max_seconds": 900,
+    "capacity_reject_bytes": 10995116277760,
+    "capacity_alert_bytes": 21990232555520,
+    "peer_token_sha256": {
+      "P1": "a770a998b69adca5f88498fcd315c7d49d54b3ab2091c6f8afab58390bb1da1a",
+      "P2": "cd080f7d82024533203a52d5493255eba01280b4b2c56e025f7d90bd0dcb8590",
+      "P3": "fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13"
+    }
+  },
+  "fixed": {
+    "declaration_max_age_days": 7,
+    "abandoned_ttl_hours": 24,
+    "cleaner_interval_hours": 24,
+    "full_reconcile_hours": 6,
+    "search_window_days": 30,
+    "late_publish_tolerance_days": 19,
+    "clock_margin_days": 1
+  }
+}
