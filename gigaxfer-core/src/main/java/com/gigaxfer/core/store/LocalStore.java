@@ -51,12 +51,27 @@ public final class LocalStore {
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
+    /**
+     * 被放棄的 handle 不會再對自己的 identity 呼叫 linkInFlight，已結束的 future 只能由別人回收：
+     * 每次登記與每次 beginWrite 都掃一遍全部 identity，成本 O(尚未收斂的 identity 數)，
+     * 平常為 0；NAS 恢復後的下一次 beginWrite 就清光最後一批。
+     */
+    private void sweepFinishedLinks() {
+        for (FileIdentity k : linksInFlight.keySet()) linkInFlight(k);
+    }
+
     void linkSent(FileIdentity id, Future<?> link) {
+        sweepFinishedLinks();
         linksInFlight.compute(id, (k, links) -> {
             Set<Future<?>> s = links != null ? links : ConcurrentHashMap.newKeySet();
             s.add(link);
             return s;
         });
+    }
+
+    /** 測試用：仍持有 link future 的 identity 數。 */
+    int inFlightIdentities() {
+        return linksInFlight.size();
     }
 
     /** 先移除已結束者；仍有未結束的 link 才回 true。 */
@@ -72,6 +87,7 @@ public final class LocalStore {
         // （contentDir 直接 resolve 它），沒檢查的話 "../.." 會逃出 namespace 樹。
         FileIdentity id = new FileIdentity(sourceNode, namespace, logicalKey);
         FileIdentity.requireSegment(dataClass, "dataClass", FileIdentity.MAX_DATA_CLASS_BYTES);
+        sweepFinishedLinks();
         Optional<String> reject = gate.rejectReason(namespace, dataClass);
         if (reject.isPresent()) throw new WriteRejectedException(WriteRejectedException.Reason.REJECTED, reject.get());
 

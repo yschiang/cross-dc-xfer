@@ -2,7 +2,7 @@
 
 Version: 0.1 draft
 Date: 2026-09-22
-依據：spec v0.3、CONTEXT.md、ADR-0001～0003、docs/design/design-decisions.md（D1～D56 及修訂）。本文只展開決策，不新增決策；每段標註來源 D 編號。
+依據：spec v0.3、CONTEXT.md、ADR-0001～0003、docs/design/design-decisions.md（D1～D57 及修訂）。本文只展開決策，不新增決策；每段標註來源 D 編號。
 
 ## 0. 設計目標與量測
 
@@ -37,7 +37,7 @@ Date: 2026-09-22
 │     │ NFS (hard)                    │ NFS       │ JDBC │
 │  ┌──▼────────────────────────────────▼──┐   ┌───▼────┐ │
 │  │  Local Storage (NAS, Node 自有)       │   │ Oracle │ │
-│  │  <src>/<ns>/<bucket>/<key>.manifest │   │ sync   │ │
+│  │  .manifest/<bucket>/<key>.manifest  │   │ sync   │ │
 │  └───────────────────────────────────────┘   │ schema │ │
 │                                              └────────┘ │
 └──────────────────────────────────────────────────────────┘
@@ -79,7 +79,7 @@ write(bytes) ...
 finalize()
   ① fsync .writing
   ② content_path = 宣告時刻的小時目錄（確保存在）；寫 <bucket>/<key>.manifest.<uuid>.tmp {identity, class, size, digest, source_ready_at, uuid, content_path, schema_version} + fsync   (D48 修)
-       link(tmp, <bucket>/<key>.manifest) 原子宣告 → unlink tmp；bucket = hash(key) 前 3 hex，與時間無關   (D44, D48)
+       link(tmp, <bucket>/<key>.manifest) 原子宣告 → unlink tmp；<bucket> = hash(key) 前 3 hex，完整目錄 <src>/<ns>/.manifest/<bucket>/，與時間無關；.manifest/ 避免與 3 字元 Data class 撞名   (D44, D48, P01 偏差 ①)
        EEXIST → 讀既有 manifest（必為完整）：本次請求的 identity、class、size、digest 與之四項皆同 → 續行，content_path 以既有為準；任一不同 → FAILURE(CONFLICT)   (D3, D3a, D53)
        續行先 rediscovery：content_path/<key> 存在且 digest = manifest → SUCCESS，不看年齡；不存在且需再次嘗試發布 → manifest mtime 超過 N = 7 天 → FAILURE(DECLARATION_EXPIRED)，App 換 key；link 已送出結果未明 → PENDING_CONFIRMATION   (D53 修, D51 修 2)
   ③ link(.writing, manifest.content_path/<key>)  ← commit point = Source Ready；跨目錄 link 到 manifest 記的位置，不是暫存目錄也不是當下小時   (D48 修)
@@ -264,6 +264,14 @@ library 設定只有四項：mount root、sync service URL、NFS 操作 timeout�
 
 每列：故障 → 設計如何封閉 → 決策 → 驗收測試。這是 §21.2 要求的 Requirement→Design→Test 核心；ops 動作見第 8 章。
 
+**測試策略（D57）**：每列的測試不只驗正常路徑，還要注入下列故障，並斷言恢復後的最終結果正確。
+
+1. 每個對外操作（NFS 呼叫、DB 語句、HTTP 呼叫）各注入三種：操作前失敗、操作成功但回覆遺失、暫時失敗後恢復。
+2. 查證與恢復步驟本身也注入失敗；查證失敗不得把未知變成確定（F32）。
+3. 有外部輸入的地方測邊界：null、型別不符、超出範圍、尾隨內容（F23）。
+
+每個 P 負責哪些列，見 P00 roadmap 的「負責 F」欄；具體到哪些操作與語句，由各實作 plan 列成測試矩陣。
+
 | # | 故障窗口 | 封閉方式 | 決策 | 測試 |
 | --- | --- | --- | --- | --- |
 | F1 | Finalize 第①②步之間 crash | 只有 `.writing`，無 manifest → Writing / Abandoned 候選，超 TTL 清道夫刪；Application 未拿到 SUCCESS 不 commit | D3, D11, D35 | T29 |
@@ -298,7 +306,7 @@ library 設定只有四項：mount root、sync service URL、NFS 操作 timeout�
 | F20 | Target 容量不足或 NAS 不健康 | 共用閘門立即關閉，最多 4 筆執行中失敗；每輪 statfs 成功後半開一筆探路；Source 只見 UNREACHABLE，原因看 Target 指標；library 端拒寫 | D43, D21 | T12, T21 |
 | F21 | 已知曾 Ready 的 Source 正式內容遺失且義務未完成 | Shallow ①′ 對 content_path 明確得到不存在 → QUARANTINED{SOURCE_LOST} + 一次 UNRECOVERABLE 歷史事件 → 事故告警看事件增量；manifest 消失不等於內容遺失；讀取失敗只計 unknown；永久追蹤，無 ops 動作能結清 | D56, D33 修 2, RT-01 | T21, T30 |
 | F22 | CP（git / CD）不可用 | 不能發新版；Node 只讀本機 active.json；資料流無關 | D17 | T14, T23, AC-CP-01～03 |
-| F23 | 壞設定 / 啟用中 crash | 啟動時驗證，失敗留 candidate 用 active；rename 原子；active 缺或載入失敗用 lkg；新版本只在成功服務後回報 | D17, D45 | T15, T22, T26, AC-CFG-01～05 |
+| F23 | 壞設定 / 啟用中 crash | 啟動時驗證，失敗留 candidate 用 active；驗證採嚴格解析：型別須完全相符、不做隱式轉型（浮點不截成整數、null 不當缺值）、整份輸入須讀完，任一不符即為壞設定；rename 原子；active 缺或載入失敗用 lkg；新版本只在成功服務後回報 | D17, D45, D57 | T15, T22, T26, AC-CFG-01～05 |
 | F24 | sync DB 部分遺失或 ops `rebuild`（表仍在） | 隔離（Node 間端點全 503、停排程、等回寫工作結束、`rebuild_in_progress` 持久化）→ 換 incarnation → 只補不刪：全掃 30 天搜尋窗補建缺的 file_identity / obligation，既有 COMPLETED / QUARANTINED / PENDING 一律保留，PENDING 的 epoch 重設為 1 → 對帳 ② 跑一次：Target 列 incarnation 不同且 valid 且四項相符 → `WHERE incarnation = 現行 AND epoch = 1 AND state = PENDING` 補 COMPLETED，`/received` 游標重設為 0 → received 依 D49 ② 只補缺列 → inspection。不可達的 Target 留 PENDING，下輪 ② 或交付換錨補齊；crash 後重啟見旗標重做；期間該 Node 同步暫停，App 照寫，完成時間待量測 | D29, D29 修, D29 修 2, D29 修 3, D49, D50, D55 修 2 | T18, T19 |
 | F24b | sync DB 整庫遺失，或備份還原時 identity 已在窗外 | 恢復限制：窗外未完成義務無法重建，連 unknown 都不顯示；DB 備份為 ops 責任，還原後仍 rebuild 換 incarnation | D56 ⑤ | T18 |
 | F25 | Target DB（received）遺失或從備份還原 | 永不從檔案算基準：向 Source 拉 COMPLETED 義務的 manifest 欄位重建，只補缺列，既有 valid 列與驗證時間保留，digest 由 Deep check 後驗。既有 invalid 列標 recovery_pending 持久化，每週期重試直到清除：一律以原 event_id 重送 X 確認已保存（不信備份旗標）；DUPLICATE 後向 Source 取該 identity 的 COMPLETED 證據，基準相符且本地重算通過才恢復 valid；重驗不符或缺 → 換新事件；ACCEPTED 或 Source PENDING / QUARANTINED / STALE / 不可達 → 維持 invalid，等修復交付或下輪重試。缺列由常駐的 Target 端對帳 ② 沿游標續補，還原後未 caught up 前 `/locate` 回 UNAVAILABLE；DUPLICATE 與 COMPLETED 證據須同一 Source incarnation；回寫皆以 event_id = X 條件更新 | D49, D29 修 2, D29 修 6, D29 修 7, D29 修 9 | T19, T30 |
@@ -309,6 +317,8 @@ library 設定只有四項：mount root、sync service URL、NFS 操作 timeout�
 | F30 | 一個 Source 大量 catch-up 餓死其他 Source | Target 每 Source 一佇列，4 槽 round-robin | D41 | T16 |
 | F31 | 非 Required target 的 Node 來拉檔，或冒用他 Node 的 target 參數 | `/pending` `/file` `/report` 的 target 取自憑證身分，另帶不同 → 403；`/file` 查義務，無則 403；`/received` 只回呼叫者為 Source 的列 | D40, D14 修, D14 修 2 | — |
 | F29 | Prometheus / Alertmanager 不可用 | watchdog 停止 → NMS 告警；CLI 扇出仍可回答 §15 | D27 修, D20 修 | T14, AC-CP-03 |
+| F32 | 查證或恢復步驟本身遇暫時錯誤（stat、讀 manifest、算 digest、讀 DB 列時 I/O 錯誤或逾時） | 查證失敗不是確定結果：原本未知的維持未知（PENDING_CONFIRMATION／unknown），恢復後重查；只有查證確定「不存在」或「不符」才轉終態。未知狀態要等所有舊操作結束、且查證確定後才清除，之後新操作的確定錯誤才是終態 | D3a, D19, D51 修 2, D57 | T13, T25, T27, T29 |
+| F33 | sync DB bootstrap／migration 中途失敗（連線中斷、DDL 執行到一半） | bootstrap 與 migration 可重跑且冪等：中斷後重跑從斷點接續，不刪、不重設既存資料、計數器與旗標；完成前 readiness 回 DB DOWN、process 不退出、`/policy` 照常回應 | D24 修, D34 修, D57 | T06, T23, T32 |
 
 ## 7. Recovery 與容量算術
 

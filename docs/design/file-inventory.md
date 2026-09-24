@@ -1,14 +1,14 @@
 # 檔案清單與生命週期（草稿，併入 system-design.md）
 
-Framework 會建立、讀取或刪除的所有檔案。正式內容目錄 `<dir>` = `<source node>/<namespace>/<data class>/<yyyy-mm-dd>/<HH>/`（D2 修），小時取第②步宣告時刻，由第一個宣告 manifest 的人決定並記在 manifest 的 content_path（D48 修）；暫存目錄 `<wdir>` = beginWrite 當下小時目錄，可與 `<dir>` 不同；manifest 目錄 `<bucket>` = `<source node>/<namespace>/<hash(key) 前 3 hex>/`，只由 identity 決定（D48）。「刪」欄為空表示 Framework 永不刪（RT-01）。
+Framework 會建立、讀取或刪除的所有檔案。正式內容目錄 `<dir>` = `<source node>/<namespace>/<data class>/<yyyy-mm-dd>/<HH>/`（D2 修），小時取第②步宣告時刻，由第一個宣告 manifest 的人決定並記在 manifest 的 content_path（D48 修）；暫存目錄 `<wdir>` = beginWrite 當下小時目錄，可與 `<dir>` 不同；manifest 目錄 `<mdir>` = `<source node>/<namespace>/.manifest/<bucket>/`，`<bucket>` = hash(key) 前 3 hex，只由 identity 決定、與時間無關（D48）；多一層 `.manifest/` 是為了不和 3 個字元的 Data class 目錄撞名（P01 偏差 ①）。小時目錄的時區是 PathLayout 的設定，所有參與同步的 Node 必須相同（P01 偏差 ②）。Logical key 結尾為 `.writing`、`.tmp` 或含 `.manifest` 者於 beginWrite 拒絕，所以下表的暫存與宣告檔名不會和正式檔撞名（P01 偏差 ③）。「刪」欄為空表示 Framework 永不刪（RT-01）。
 
 ## Source Node NAS
 
 | 檔案 | 建 | 讀 | 刪 | 生命週期 | 決策 |
 | --- | --- | --- | --- | --- | --- |
 | `<wdir>/<key>.<uuid>.writing` | library `beginWrite` | library（fsync、link 來源） | library Finalize 第④步 unlink；超過 Abandoned TTL 由清道夫刪 | Writing → 跨目錄成為 `<dir>/<key>` 的 link 來源 → unlink；或 Abandoned；超 TTL 後已送出的 link 結果依 D51 修 2 查證 | D3, D11, D35, D48 修, D51 修 2 |
-| `<bucket>/<key>.manifest.<uuid>.tmp` | library Finalize 第②步寫入 + fsync | library（link 來源） | link 成功後 unlink；殘留由清道夫刪 | 一次性 | D44, D35 |
-| `<bucket>/<key>.manifest` | library Finalize 第②步 link(tmp) 原子宣告；含 content_path | sync service 掃描、rediscovery、`/locate` | 本版永不刪，不自動也不手動（D53） | 建立 → 與 `<key>` 一起構成 Source Ready → 永久保留；無內容者為「未發布或發布後遺失」候選；mtime 作桶枚舉粗篩與宣告年齡（N = 7 天，超過不可再次嘗試發布）依據 | D1, D3, D48, D53, D53 修, D56 |
+| `<mdir>/<key>.manifest.<uuid>.tmp` | library Finalize 第②步寫入 + fsync | library（link 來源） | link 成功後 unlink；殘留由清道夫刪 | 一次性 | D44, D35 |
+| `<mdir>/<key>.manifest` | library Finalize 第②步 link(tmp) 原子宣告；含 content_path | sync service 掃描、rediscovery、`/locate` | 本版永不刪，不自動也不手動（D53） | 建立 → 與 `<key>` 一起構成 Source Ready → 永久保留；無內容者為「未發布或發布後遺失」候選；mtime 作桶枚舉粗篩與宣告年齡（N = 7 天，超過不可再次嘗試發布）依據 | D1, D3, D48, D53, D53 修, D56, P01 偏差 |
 | `<dir>/<key>` | library Finalize 第③步 link | sync service `/file` streaming、Consumer `read` | 永不刪，NAS 政策 30 天 | link 成功 = Source Ready = commit point | D3, RT-01 |
 
 ## Target Node NAS
