@@ -30,7 +30,7 @@ switch (r) {
 6. `close()` 只關通道；即使在 `PendingConfirmation` 後 `close()`，重呼 `finalizeWrite()` 仍會收斂（library 會重新開啟暫存檔完成 fsync）。try-with-resources 可用，但 `PendingConfirmation` 的重試必須用同一個 handle。`close()` 經 NFS 執行器，可能丟 `NfsUnavailableException`；用 try-with-resources 時要注意雙重故障（double fault）：若 `stream().write` 先丟出例外、`close()` 又因池滿/timeout 再丟一次，Java 標準語意（JLS 14.20.3）是把 try 區塊（write）的例外當主要例外拋出，`close()` 的例外被鏈到 `getSuppressed()`——呼叫端若只看主例外型別，可能忽略 close() 那一份診斷資訊（例如 close 當下 NFS 也在池滿），必要時檢查 suppressed exceptions。
 7. **`WriteHandle` 單執行緒使用，不可跨執行緒共用**（狀態轉換的判定有同步，digest／size／MessageDigest 沒有）；`PendingConfirmation` 的重試也要在同一執行緒上用同一個 handle。
 8. `beginWrite()` 的 `namespace`、`dataClass`、`logicalKey` 都直接成為路徑片段：空字串、以 `.` 開頭（含 `..`）、含 `/` 或 `\0` 一律在碰 NFS 前丟 `IllegalArgumentException`。
-9. 暫存寫入超過 24 h 未 Finalize 可能被清道夫中止；宣告後超過 7 天未發布的 key 不可再發布（`DECLARATION_EXPIRED`，`LocalStore.DECLARATION_MAX_AGE`）。
+9. 暫存寫入超過 24 h 未 Finalize 可能被清道夫中止；宣告後超過 7 天未發布的 key 不可再發布（`DECLARATION_EXPIRED`，`LocalStore.DECLARATION_MAX_AGE`）；年齡以第一次宣告寫進 manifest 的 `source_ready_at` 計，不看 NAS mtime，恰好 7 天仍可再次嘗試（D58 ③）。已發布者不因過期被否定，link 結果未知時仍回 `PendingConfirmation`。
 10. **每個 mount root 在同一 process 內只建立一個 `LocalStore`**：in-flight link 的追蹤以實例為範圍，多個實例互不可見，會讓 link-key timeout 後的重試誤判。
 
 型別參考：

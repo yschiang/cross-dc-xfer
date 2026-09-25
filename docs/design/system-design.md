@@ -81,7 +81,7 @@ finalize()
   ② content_path = 宣告時刻的小時目錄（確保存在）；寫 <bucket>/<key>.manifest.<uuid>.tmp {identity, class, size, digest, source_ready_at, uuid, content_path, schema_version} + fsync   (D48 修)
        link(tmp, <bucket>/<key>.manifest) 原子宣告 → unlink tmp；<bucket> = hash(key) 前 3 hex，完整目錄 <src>/<ns>/.manifest/<bucket>/，與時間無關；.manifest/ 避免與 3 字元 Data class 撞名   (D44, D48, P01 偏差 ①)
        EEXIST → 讀既有 manifest（必為完整）：本次請求的 identity、class、size、digest 與之四項皆同 → 續行，content_path 以既有為準；任一不同 → FAILURE(CONFLICT)   (D3, D3a, D53)
-       續行先 rediscovery：content_path/<key> 存在且 digest = manifest → SUCCESS，不看年齡；不存在且需再次嘗試發布 → manifest mtime 超過 N = 7 天 → FAILURE(DECLARATION_EXPIRED)，App 換 key；link 已送出結果未明 → PENDING_CONFIRMATION   (D53 修, D51 修 2)
+       續行先 rediscovery：content_path/<key> 存在且 digest = manifest → SUCCESS，不看年齡；不存在且需再次嘗試發布 → 既有 manifest 的 source_ready_at 超過 N = 7 天 → FAILURE(DECLARATION_EXPIRED)，App 換 key；link 已送出結果未明 → PENDING_CONFIRMATION   (D53 修, D51 修 2, D58 ③)
   ③ link(.writing, manifest.content_path/<key>)  ← commit point = Source Ready；跨目錄 link 到 manifest 記的位置，不是暫存目錄也不是當下小時   (D48 修)
        EEXIST → 重讀 <key> 算 digest = manifest → 已完成（重試路徑的當下確認，D44）
   ④ unlink .writing 與 manifest tmp（失敗不影響結果，清道夫兜底）；manifest 本身永不刪   (D35, D53)
@@ -98,7 +98,8 @@ finalize()
 每 10 s：readdir 當前 + 前 2 小時的 /HH/ 內容目錄                        (D6, D26, D30)
   → 與記憶體已知 key 集合比對，只有新 key 走 ingest                        (D36)
   → ingest（冪等）：由路徑推 identity → 讀 <bucket>/<key>.manifest → 路徑 == content_path 才算 Ready，否則計 anomaly → INSERT file_identity   (D48, D53)
-       → 依 Policy (source, class) 展開 Required targets → INSERT obligation PENDING；identity 與全部義務同一交易，commit 後才更新記憶體集合   (D10, D10 修)
+       → 重讀 <key> 比對 manifest 的 size 與 digest：相符 → 義務 PENDING；不符 → 仍登記 identity 與全部義務，義務設 QUARANTINED 並記原因、告警，計入 backlog／age，重驗通過才可交付；讀取失敗 → unknown，不判定內容損毀、不登記，下輪重試   (D58 ②)
+       → 依 Policy (source, class) 展開 Required targets → INSERT obligation；identity 與全部義務同一交易，commit 後才更新記憶體集合   (D10, D10 修)
 每 6 h：全量對帳掃整個保留期 30 天，逐小時內容目錄 readdir 對 DB 該小時集合，同一段 ingest，補漏並寫 inspection   (D10, D19 ①, D50)
   同時枚舉 manifest 桶（mtime 粗篩窗內）：manifest 有、內容無、DB 曾 Ready → 交 2.5 ①′ 判定明確不存在；
      DB 無紀錄 → 「未發布或發布後遺失」候選，計 unknown；DB 剛重建 → unknown。只有不在 DB 的 manifest 才讀內容；窗外 manifest 不枚舉，窗外未完成義務由 DB 列驅動檢查   (D53, D56)
@@ -214,7 +215,7 @@ spec §14 其餘狀態為 `/status` 的顯示推導：
 | --- | --- | --- | --- | --- | --- |
 | `<wdir>/<key>.<uuid>.writing` | library `beginWrite` | library（fsync、link 來源） | library Finalize 第④步 unlink；超過 Abandoned TTL 由清道夫刪 | Writing → 跨目錄成為 `<dir>/<key>` 的 link 來源 → unlink；或 Abandoned；超 TTL 後已送出的 link 結果依 D51 修 2 查證 | D3, D11, D35, D48 修, D51 修 2 |
 | `<mdir>/<key>.manifest.<uuid>.tmp` | library Finalize 第②步寫入 + fsync | library（link 來源） | link 成功後 unlink；殘留由清道夫刪 | 一次性 | D44, D35 |
-| `<mdir>/<key>.manifest` | library Finalize 第②步 link(tmp) 原子宣告；含 content_path | sync service 掃描、rediscovery、`/locate` | 本版永不刪，不自動也不手動（D53） | 建立 → 與 `<key>` 一起構成 Source Ready → 永久保留；無內容者為「未發布或發布後遺失」候選；mtime 作桶枚舉粗篩與宣告年齡（N = 7 天，超過不可再次嘗試發布）依據 | D1, D3, D48, D53, D53 修, D56, P01 偏差 |
+| `<mdir>/<key>.manifest` | library Finalize 第②步 link(tmp) 原子宣告；含 content_path | sync service 掃描、rediscovery、`/locate` | 本版永不刪，不自動也不手動（D53） | 建立 → 與 `<key>` 一起構成 Source Ready → 永久保留；無內容者為「未發布或發布後遺失」候選；mtime 只作桶枚舉粗篩；宣告年齡（N = 7 天，超過不可再次嘗試發布）依 manifest 內的 source_ready_at（D58 ③） | D1, D3, D48, D53, D53 修, D56, P01 偏差 |
 | `<dir>/<key>` | library Finalize 第③步 link | sync service `/file` streaming、Consumer `read` | 永不刪，NAS 政策 30 天 | link 成功 = Source Ready = commit point | D3, RT-01 |
 
 **Target Node NAS**
@@ -231,7 +232,8 @@ Target 端不寫 `.manifest` 與 `.evidence`；基準在 Source manifest 與 Tar
 | 檔案 | 建 | 讀 | 刪 | 生命週期 | 決策 |
 | --- | --- | --- | --- | --- | --- |
 | `candidate.json.tmp` → `candidate.json` | CD pipeline 寫 tmp 後 rename | sync service 驗證 | 驗證後 rename 為 active，或驗證失敗留原地並上報 | 一次性；sync service 只認 `candidate.json`，`.tmp` 一律忽略 | D17 |
-| `active.json` | sync service 啟動時由 candidate rename | sync service 啟動讀一次、`/policy` | 下一版啟用時 rename 為 lkg | 當前生效版本 | D17, D18 |
+| `active.json` | sync service 啟動時把驗證過的 candidate 內容寫成 `active.json.tmp`、fsync 後 rename 而成（不搬 candidate 檔本身，P02 偏差 3 ⑩） | sync service 啟動讀一次、`/policy` | 下一版啟用時 rename 為 lkg | 當前生效版本 | D17, D18 |
+| `active.json.tmp` | sync service 啟用 candidate 時寫入驗證過的內容並 fsync | 無 | rename 為 active；殘留者下次啟用時截斷覆寫 | 一次性 | P02 偏差 3 ⑩ |
 | `lkg.json` | sync service 由 active rename | sync service 啟動時 active 缺失的備援 | 下一版啟用時被覆蓋 | 上一個成功版本 | D17 |
 | Node token 秘密檔（路徑由部署決定） | ops 部署時放置，不進 git | sync service 啟動讀取，作為呼叫他 Node 時的憑證；驗證端只持有各 Node token 的雜湊、不持明文 | 永不刪；輪替為 ops 程序（operational policy 可調項），新值覆寫 | 每 Node 一份，輪替時覆寫 | D14 修, D14 修 2, D30 |
 
@@ -245,11 +247,13 @@ Target 端不寫 `.manifest` 與 `.evidence`；基準在 Source manifest 與 Tar
 
 **DB schema**（D24，Oracle，sync 自有 schema，SQL 可攜、H2 Oracle mode 測試）：
 
+**時間與資料庫前提**（D58 ⑦⑧）：所有 `TIMESTAMP` 欄位存 UTC。JVM 以 `-Duser.timezone=UTC` 啟動；連線池為每個 DB session 設定 UTC 時區；程式讀寫時間欄位時明確以 UTC 轉換，不依賴 JVM 或 session 預設。Oracle 前提：版本 ≥ 12.2、`COMPATIBLE` ≥ 12.2（超過 30 bytes 的識別名稱由 `COMPATIBLE` 決定是否允許，見 Oracle 官方 Database Object Names and Qualifiers）、`NLS_CHARACTERSET` = AL32UTF8（identity 片段的 UTF-8 位元組上限與欄寬一致的前提）。
+
 | 表 | 欄位 | 索引 |
 | --- | --- | --- |
-| `file_identity` | source_node, namespace, logical_key, data_class, size, digest, source_ready_at, content_path | PK (source_node, namespace, logical_key) |
-| `obligation` | identity_ref, target_node, state ∈ {PENDING, QUARANTINED, COMPLETED}, epoch, attempts, next_attempt_at, last_error, completed_at, completed_seq | (target_node, state, next_attempt_at)；(state, source_ready_at) 供 age；(target_node, completed_seq) 供 Target ② 列舉，每次進入 COMPLETED 換新號（D29 修 10, D29 修 11） |
-| `received` | identity_ref, size, digest, source_ready_at, published_at, valid, invalid_reason, observed_digest, event_id, incarnation, epoch, report_pending, recovery_pending, change_seq | PK identity_ref；(change_seq) 供 `/received?since`，任何對外可見變更皆換新號（D29 修 10, D29 修 11）；(report_pending) 供背景重送 |
+| `file_identity` | source_node, namespace, logical_key, data_class, size, digest, source_ready_at, content_path | PK (source_node, namespace, logical_key)；(source_ready_at) 供 age（D58 ①） |
+| `obligation` | identity_ref, target_node, state ∈ {PENDING, QUARANTINED, COMPLETED}, epoch, attempts, next_attempt_at, last_error, completed_at, completed_seq | (target_node, state, next_attempt_at)；age 由 join `file_identity` 取 source_ready_at，不在 obligation 冗餘存放（D58 ①）；(target_node, completed_seq) 供 Target ② 列舉，每次進入 COMPLETED 換新號（D29 修 10, D29 修 11） |
+| `received` | identity_ref, data_class, content_path（Source 選定的正式路徑，Target 不自行推導）, size, digest, source_ready_at, published_at, valid, invalid_reason, observed_digest, event_id, incarnation, epoch, report_pending, recovery_pending, change_seq | PK identity_ref；(change_seq) 供 `/received?since`，任何對外可見變更皆換新號（D29 修 10, D29 修 11）；(report_pending) 供背景重送 |
 | `rebuild_progress` | source_node, incarnation, cursor, caught_up_at | PK source_node；Target 端對帳 ② 每 Source 游標，綁 incarnation，與本頁結果同交易推進，還原後未 caught up 不宣稱覆蓋完整（D29 修 7, D29 修 9） |
 | `node_meta` | incarnation（rebuild 時換新的 UUID）、rebuild_in_progress（與新 incarnation 同交易寫入，重啟見旗標維持封鎖並重做，D29 修 2 / 修 3） | 單列 |
 | `seq_counter` | name ∈ {completed, change}, last | PK name；兩列各自行鎖；交易尾端 FOR UPDATE 一次保留 K 個連續號逐列分配，鎖持有到 commit（D29 修 10, D29 修 11） |
@@ -372,7 +376,7 @@ library 設定只有四項：mount root、sync service URL、NFS 操作 timeout�
 | DB 重建 | 30 天 × 2.4×10⁵ × 9 ≈ 6.5×10⁷ 義務；完成時間由全量重建測試量測，期間該 Node 同步暫停；災難路徑 | D29, D29 修 2, D50 |
 | 常駐對帳讀取量 | Target ② 每日每 Target 約 2.2×10⁶ 筆完成紀錄，DB 先過濾已有列，缺列才 stat；Source ② 對稱；序號行鎖在追平峰值下的等待列入壓測 | D29 修 10, D29 修 11 |
 | DB 穩態列數 | 已完成部分 obligation ≈ 1.3×10⁸ / Source（identity 整組 COMPLETED 後 60 天 purge）；未完成義務不按時間刪，QUARANTINED 累積量 = 隔離率 × 天，無上限，處置在 ops，release / evict / 換 key 不結清 SOURCE_LOST | D32, D35 修, D56 |
-| 遲到發布預算 | 固定項 10.25 天（N 7 + TTL 1 + 清道夫間隔 1 + 時鐘裕度 1 + 對帳 0.25）；清道夫停跑（含 NAS 中斷）< 19 天，operational policy | D56 ④ |
+| 遲到發布預算 | 固定項 10.25 天（N 7 + TTL 1 + 清道夫間隔 1 + 時鐘裕度 1 + 對帳 0.25）；清道夫停跑（含 NAS 中斷）< 19 天，v1 固定常數，不接受 operational config 覆寫 | D56 ④, D30 修 5／6, D58 ④ |
 | 容量門檻 | reject 10 TB、alert 20 TB；NAS 遠大於此，本版不做容量規劃 | D30 修 |
 
 結構性事實：Source Node 整體停機時 App 同停、不產新檔；sync 主機單獨停機時 App 照寫，Source 恢復後九個 Target 同時追，由 Source 供檔預算 100 MB/s 承接（D52）；Target 停機的 catch-up 由 Target 自限速率，九個 Source 同時供給也不會塞爆（D31）。

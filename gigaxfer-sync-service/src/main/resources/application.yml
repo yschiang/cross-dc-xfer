@@ -9,6 +9,7 @@ spring:
     hikari:
       initialization-fail-timeout: -1   # DB 不可用時不阻擋啟動
       maximum-pool-size: 8
+      connection-init-sql: ALTER SESSION SET TIME_ZONE = 'UTC'   # 每個 DB session 以 UTC 為準（D58 ⑦，Oracle 語法）
 management:
   endpoints:
     web:

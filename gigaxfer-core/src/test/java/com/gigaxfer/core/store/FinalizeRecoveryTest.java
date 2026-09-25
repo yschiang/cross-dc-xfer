@@ -140,6 +140,38 @@ class FinalizeRecoveryTest {
         assertThat(layout.manifestPath(id)).exists(); // manifest 永不刪（D53）
     }
 
+    /** D58 ③：年齡依 manifest 的 source_ready_at；恰好 N 仍可再次嘗試發布，超過 N（多 1 ms）才過期。 */
+    @Test
+    void declaration_age_boundary_is_exactly_n_days_from_source_ready_at() throws Exception {
+        WriteHandle atN = write(content);
+        nfs.dropBefore("link-key");
+        assertThat(atN.finalizeWrite()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
+        clock.advance(LocalStore.DECLARATION_MAX_AGE);
+        assertThat(atN.finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
+
+        FileIdentity other = new FileIdentity("P3", "mes", "age-over");
+        WriteHandle over = store.beginWrite("mes", "metrology", "age-over");
+        over.stream().write(content);
+        nfs.dropBefore("link-key");
+        assertThat(over.finalizeWrite()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
+        clock.advance(LocalStore.DECLARATION_MAX_AGE.plusMillis(1));
+        FinalizeResult r = over.finalizeWrite();
+        assertThat(r).isInstanceOf(FinalizeResult.Failure.class);
+        assertThat(((FinalizeResult.Failure) r).reason()).isEqualTo(FailureReason.DECLARATION_EXPIRED);
+        assertThat(layout.manifestPath(other)).exists();
+    }
+
+    /** D58 ③：manifest 的 mtime 不參與年齡判斷——mtime 很舊但 source_ready_at 新 → 不過期。 */
+    @Test
+    void declaration_age_ignores_manifest_mtime() throws Exception {
+        WriteHandle h = write(content);
+        nfs.dropBefore("link-key");
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.PendingConfirmation.class);
+        Files.setLastModifiedTime(layout.manifestPath(id), FileTime.from(clock.instant().minus(Duration.ofDays(30))));
+        clock.advance(Duration.ofDays(1));
+        assertThat(h.finalizeWrite()).isInstanceOf(FinalizeResult.Success.class);
+    }
+
     @Test
     void scenario_11_published_day_1_retry_day_8_is_success_not_expired() throws Exception {
         WriteHandle h = write(content);

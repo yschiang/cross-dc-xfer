@@ -10,6 +10,10 @@
 可獨立運行的部署單位，擁有自己的 Local Storage 與 state；對應一個 Phase。
 _Avoid_: Site, Data Center, Phase（作為技術詞時）
 
+**Fab**:
+共用同一份 Policy、彼此同步的一組 Node。設定檔以 `policy.deployment` 欄位記錄其識別字串；`deployment` 只是設定欄位名稱，不是另一個領域概念。
+_Avoid_: deployment（作為領域詞時）, cluster
+
 ### Identity
 
 **File identity**:
@@ -60,12 +64,20 @@ _Avoid_: draft, temp, staging
 Application 明確宣告寫入完成的動作；結果為 SUCCESS（進入 Source Ready）、FAILURE 或 PENDING_CONFIRMATION。
 _Avoid_: commit, close, publish（Source 端）
 
+**Finalizing**:
+第一次呼叫 Finalize 之後、結果尚未確定的狀態（含 PENDING_CONFIRMATION）；內容已固定，不可再寫入、不可 Discard，只能重呼 Finalize 直到結果確定。
+_Avoid_: committing, in-flight
+
+**Finalize Failed**:
+Finalize 回確定的 FAILURE（內容衝突、宣告過期、確定未生效的 I/O 失敗）後的終態；此檔永不成為 Source Ready，重呼 Finalize 仍回同一結果，可 Discard 清理暫存。
+_Avoid_: rejected, aborted
+
 **Source Ready**:
 Finalize SUCCESS 後的狀態：內容持久化、Integrity baseline 建立、Required targets 可推導、crash 後可重新發現。Framework 對同步義務的承擔自此開始。
 _Avoid_: ready, done, complete
 
 **Discard**:
-Application 主動放棄一份 Writing 中的檔案；只允許對 Writing 狀態，Source Ready 後不可 Discard。
+Application 主動放棄一份尚未發布的檔案；只允許對 Writing 與 Finalize Failed，Finalizing 與 Source Ready 不可 Discard。
 _Avoid_: delete, cancel, abort
 
 **Abandoned**:

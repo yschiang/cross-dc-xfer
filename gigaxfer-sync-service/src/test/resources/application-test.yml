@@ -4,6 +4,8 @@ spring:
     driver-class-name: org.h2.Driver
     username: sa
     password: ""
+    hikari:
+      connection-init-sql: SET TIME ZONE 'UTC'   # H2 的 session 時區語法；正式設定為 Oracle 的 ALTER SESSION
 gigaxfer:
   node: P1
   nfs-timeout: 2s

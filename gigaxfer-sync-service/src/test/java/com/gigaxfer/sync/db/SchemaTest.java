@@ -147,4 +147,12 @@ class SchemaTest extends SyncTestSupport {
             jdbc.update("DELETE FROM received WHERE logical_key='remote-path-test'");
         }
     }
+
+    /** D58 ⑦：連線池的每個 session 都以 UTC 為時區（connection-init-sql）。 */
+    @Test
+    void db_sessions_use_utc() {
+        assertThat(jdbc.queryForObject(
+            "SELECT SETTING_VALUE FROM INFORMATION_SCHEMA.SETTINGS WHERE SETTING_NAME = 'TIME ZONE'", String.class))
+            .isEqualTo("UTC");
+    }
 }
