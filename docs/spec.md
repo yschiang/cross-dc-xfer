@@ -55,7 +55,7 @@ Date: 2026-09-21
 | Writing | 已開始寫入、尚未 Finalize 的狀態；不可消費、不可複製 |
 | Finalize | Application 明確宣告寫入完成；結果為 SUCCESS / FAILURE / PENDING_CONFIRMATION |
 | Source Ready | Finalize SUCCESS 後的狀態；Framework 對同步義務的承擔自此開始 |
-| Discard | Application 主動放棄 Writing 檔案；只允許對 Writing 狀態 |
+| Discard | Application 主動放棄尚未發布的檔案；只允許對 Writing 與 Finalize 已回確定 FAILURE 的檔案，Finalize 結果未定（PENDING_CONFIRMATION）與 Source Ready 後不可 |
 | Abandoned | Writing 超過 TTL 未 Finalize 或 Discard，由 Framework 判定可清理的狀態 |
 | Target Ready | Target 上完成傳輸、Integrity 驗證、持久化與 Publish 的狀態 |
 | Publish | Target 端以正式名稱原子地讓已驗證內容對 Consumer 可見 |
@@ -127,7 +127,7 @@ Contract 須明確定義下列語意；不規定 API signature：
 
 - **write**：須宣告 Namespace、Logical key 與 Data class。Namespace 或 Data class 未於 Policy 登錄者，write 時明確拒絕。
 - **Finalize**：Application 明確宣告寫入完成；回傳 SUCCESS（進入 Source Ready）、FAILURE 或 PENDING_CONFIRMATION。close() 或 rename 慣例不得取代 Finalize。
-- **Discard**：Application 主動放棄 Writing 檔案；只允許對 Writing 狀態。
+- **Discard**：Application 主動放棄尚未發布的檔案；只允許對 Writing 與 Finalize 已回確定 FAILURE 的檔案，Finalize 結果未定（PENDING_CONFIRMATION）與 Source Ready 後不可。
 - **read / exists**：以完整 File identity（含 Source Node）查詢；回應語意見 SR-06。
 - 可重試錯誤與結果待確認的語意見 SR-04。
 

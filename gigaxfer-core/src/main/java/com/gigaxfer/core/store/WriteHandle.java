@@ -257,10 +257,11 @@ public final class WriteHandle implements AutoCloseable {
 
             // 需要再次嘗試發布：年齡只約束「再次嘗試一個早先的宣告」（D53 修）。
             // 本次呼叫剛剛建立的宣告永遠不算過期。
+            // 年齡依既有 manifest 內的 source_ready_at（宣告時刻，Source 時鐘），不用 NAS mtime（D58 ③）。
             if (preexisting) {
-                Instant mtime = store.nfs.call("stat-manifest", () -> Files.getLastModifiedTime(manifestPath).toInstant());
-                if (Duration.between(mtime, store.clock.instant()).compareTo(LocalStore.DECLARATION_MAX_AGE) > 0) {
-                    return fail(FailureReason.DECLARATION_EXPIRED, "declared at " + mtime + ", use a new logical key");
+                Instant priorDeclaredAt = declared.sourceReadyAt();
+                if (Duration.between(priorDeclaredAt, store.clock.instant()).compareTo(LocalStore.DECLARATION_MAX_AGE) > 0) {
+                    return fail(FailureReason.DECLARATION_EXPIRED, "declared at " + priorDeclaredAt + ", use a new logical key");
                 }
             }
 

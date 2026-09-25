@@ -8,7 +8,7 @@
 export JAVA_HOME=/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home
 export PATH=/opt/homebrew/bin:$JAVA_HOME/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH
 mvn -q -pl gigaxfer-sync-service -am package -DskipTests
-java -jar gigaxfer-sync-service/target/gigaxfer-sync-service-0.1.0-SNAPSHOT.jar \
+java -Duser.timezone=UTC -jar gigaxfer-sync-service/target/gigaxfer-sync-service-0.1.0-SNAPSHOT.jar \
   --gigaxfer.node=P1 \
   --gigaxfer.config-dir=/var/lib/gigaxfer/config \
   --gigaxfer.token-file=/etc/gigaxfer/node.token \
@@ -16,6 +16,8 @@ java -jar gigaxfer-sync-service/target/gigaxfer-sync-service-0.1.0-SNAPSHOT.jar 
   --spring.datasource.url=jdbc:oracle:thin:@//db:1521/FREEPDB1 \
   --spring.datasource.username="$P02_DB_USER" --spring.datasource.password="$P02_DB_PASSWORD"
 ```
+
+資料庫與時間前提（D58 ⑦⑧）：Oracle 版本 ≥ 12.2、`COMPATIBLE` ≥ 12.2（兩個索引名超過 30 bytes，需要長識別名稱）、`NLS_CHARACTERSET` = AL32UTF8（identity 片段的 UTF-8 位元組上限與欄寬一致的前提）。所有時間欄位存 UTC：JVM 以 `-Duser.timezone=UTC` 啟動（程式進入點也固定為 UTC），連線池以 `connection-init-sql` 把每個 session 設為 UTC，程式讀寫時間欄位一律經 `DbTime` 以 UTC 轉換。
 
 本機參數（不是 config 版本的一部分）：
 

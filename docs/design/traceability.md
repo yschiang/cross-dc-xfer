@@ -12,7 +12,7 @@
 | SR-01 Standardized Access | library API（D23）；Namespace / Data class 登錄檢查（D18）；Logical key 唯一性為 App 義務（D8） | T20, T29 |
 | SR-02 NFS Ownership | Framework 只面對 mount 語意；mount 參數為 infra 交付（D3b, §5） | T13 |
 | SR-03 NFSv3 Compatibility | §5 驗證清單 ①–⑥ | T13, T25 |
-| SR-04 Operation Outcome | 三態 Finalize + 冪等重試（D3, D3a）；ESTALE → PENDING_CONFIRMATION（§5） | T13, T25, T29 |
+| SR-04 Operation Outcome | 三態 Finalize + 冪等重試（D3, D3a）；確定失敗回 FAILURE；已送出 link、結果未知時維持 PENDING_CONFIRMATION，不單憑 ESTALE 決定結果（D58 ⑤、F32） | T13, T25, T29 |
 | SR-05 I/O Isolation | NFS op executor 有界 pool + timeout（§5, §8） | T25 |
 | SR-06 Read Availability | `exists()` = stat + Policy，不碰 DB / 遠端（D23）；NOT_EXPECTED（D15） | T28 |
 | FR-01 Immutable Ready | link 拒絕覆蓋（D3）；Target 保留原 identity 與路徑（D2） | T20 |
